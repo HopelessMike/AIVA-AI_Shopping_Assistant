@@ -1,0 +1,36 @@
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ---- Node / Frontend ----
+node_modules/
+.npm/
+.pnpm-store/
+dist/
+build/
+.next/
+.out/
+coverage/
+.parcel-cache/
+.turbo/
+.eslintcache
+
+# Env & local configs (root e sottocartelle)
+.env
+.env.*
+*.local
+
+# ---- Python / Backend ----
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# ---- Vercel / misc ----
+.vercel/
+.claude

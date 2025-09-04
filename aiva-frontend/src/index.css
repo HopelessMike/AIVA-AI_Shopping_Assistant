@@ -1,0 +1,115 @@
+// src/index.css
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-500;
+  }
+}
+
+@layer components {
+  /* Glass morphism effect */
+  .glass {
+    @apply backdrop-blur-md bg-white/70 border border-white/20;
+  }
+  
+  /* Gradient text */
+  .gradient-text {
+    @apply text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600;
+  }
+  
+  /* Hover lift effect */
+  .hover-lift {
+    @apply transition-transform duration-200 hover:-translate-y-1;
+  }
+  
+  /* Button base */
+  .btn-base {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+  }
+  
+  /* Primary button */
+  .btn-primary {
+    @apply btn-base bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:shadow-lg;
+  }
+  
+  /* Card */
+  .card {
+    @apply bg-white rounded-xl shadow-sm p-6 transition-shadow duration-200 hover:shadow-md;
+  }
+}
+
+@layer utilities {
+  /* Animations */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  
+  .animate-shimmer {
+    animation: shimmer 2s linear infinite;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%);
+    background-size: 200% 100%;
+  }
+  
+  /* Gradient animations */
+  .animate-gradient-x {
+    animation: gradient-x 3s ease infinite;
+  }
+  
+  @keyframes gradient-x {
+    0%, 100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+  
+  .animate-gradient-y {
+    animation: gradient-y 3s ease infinite;
+  }
+  
+  @keyframes gradient-y {
+    0%, 100% {
+      background-position: 50% 0%;
+    }
+    50% {
+      background-position: 50% 100%;
+    }
+  }
+}
