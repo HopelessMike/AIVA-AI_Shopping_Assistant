@@ -1,36 +1,17 @@
-# ---- OS / Editor ----
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+# ---- Secrets / env (anche nelle sottocartelle) ----
+**/.env
+**/.env.*
+**/*.local
+.envrc
+**/.envrc
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
 
-# ---- Node / Frontend ----
-node_modules/
-.npm/
-.pnpm-store/
-dist/
-build/
-.next/
-.out/
-coverage/
-.parcel-cache/
-.turbo/
-.eslintcache
-
-# Env & local configs (root e sottocartelle)
-.env
-.env.*
-*.local
-
-# ---- Python / Backend ----
+# ---- Python virtual envs (sia venv che .venv) ----
+venv/
 .venv/
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.egg-info/
-.pytest_cache/
-
-# ---- Vercel / misc ----
-.vercel/
-.claude
+**/venv/
+**/.venv/
