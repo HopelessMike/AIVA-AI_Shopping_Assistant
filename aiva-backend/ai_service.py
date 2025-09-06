@@ -769,3 +769,10 @@ async def handle_voice_stream(
             "message": "Si è verificato un errore. Riprova.",
             "timestamp": datetime.utcnow().isoformat()
         })
+
+# Wrapper function for easy import
+async def process_voice_command_streaming(text: str, context: Dict) -> AsyncGenerator[Dict[str, Any], None]:
+    """Wrapper function for process_voice_command_streaming"""
+    ai_service = get_ai_service()
+    async for chunk in ai_service.process_voice_command_streaming(text, context):
+        yield chunk

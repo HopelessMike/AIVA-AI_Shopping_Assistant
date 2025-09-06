@@ -1461,17 +1461,20 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "message": "Sto elaborando la tua richiesta..."
                 })
                 
-                # Here you would integrate with AI service for real processing
-                # For demo, simulate processing
-                await asyncio.sleep(0.5)
-                
-                # Stream response back
-                await manager.send_json(websocket, {
-                    "type": "response",
-                    "action": "search_products",
-                    "message": "Ho trovato quello che cerchi!",
-                    "data": {}
-                })
+                # Process with real AI service
+                try:
+                    from ai_service import process_voice_command_streaming
+                    
+                    # Stream AI response
+                    async for chunk in process_voice_command_streaming(text, context):
+                        await manager.send_json(websocket, chunk)
+                        
+                except Exception as e:
+                    logger.error(f"AI processing error: {e}")
+                    await manager.send_json(websocket, {
+                        "type": "error",
+                        "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi."
+                    })
                 
             elif data.get("type") == "update_preferences":
                 # Update user preferences
