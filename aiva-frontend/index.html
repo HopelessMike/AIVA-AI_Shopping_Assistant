@@ -51,74 +51,6 @@
         -moz-osx-font-smoothing: grayscale;
       }
       
-      /* Loading screen styles */
-      .loading-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        z-index: 9999;
-        opacity: 1;
-        transition: opacity 0.3s ease;
-      }
-      
-      .loading-content {
-        text-align: center;
-        color: white;
-      }
-      
-      .loading-logo {
-        font-size: 48px;
-        margin-bottom: 20px;
-        animation: pulse 2s infinite;
-      }
-      
-      .loading-text {
-        font-size: 24px;
-        font-weight: 600;
-        margin-bottom: 10px;
-      }
-      
-      .loading-subtext {
-        font-size: 14px;
-        opacity: 0.9;
-      }
-      
-      .loading-spinner {
-        width: 40px;
-        height: 40px;
-        margin: 20px auto;
-        border: 3px solid rgba(255, 255, 255, 0.3);
-        border-radius: 50%;
-        border-top-color: white;
-        animation: spin 1s ease-in-out infinite;
-      }
-      
-      @keyframes pulse {
-        0%, 100% {
-          transform: scale(1);
-        }
-        50% {
-          transform: scale(1.05);
-        }
-      }
-      
-      @keyframes spin {
-        to {
-          transform: rotate(360deg);
-        }
-      }
-      
-      .loading-container.fade-out {
-        opacity: 0;
-        pointer-events: none;
-      }
-      
       /* Noscript fallback */
       noscript {
         display: block;
@@ -130,16 +62,6 @@
     </style>
   </head>
   <body>
-    <!-- Loading Screen -->
-    <div id="loading" class="loading-container">
-      <div class="loading-content">
-        <div class="loading-logo">🛍️</div>
-        <div class="loading-text">AIVA Fashion</div>
-        <div class="loading-subtext">Il tuo Personal Shopper AI</div>
-        <div class="loading-spinner"></div>
-      </div>
-    </div>
-    
     <!-- React Root -->
     <div id="root"></div>
     
@@ -154,17 +76,6 @@
     <script type="module" src="/src/main.jsx"></script>
     
     <script>
-      // Remove loading screen when app is ready
-      window.addEventListener('load', () => {
-        setTimeout(() => {
-          const loader = document.getElementById('loading');
-          if (loader) {
-            loader.classList.add('fade-out');
-            setTimeout(() => loader.remove(), 300);
-          }
-        }, 500);
-      });
-      
       // Register Service Worker for PWA (optional)
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {

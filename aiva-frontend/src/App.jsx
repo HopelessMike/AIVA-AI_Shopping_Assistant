@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
+import { Routes, Route, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShoppingBag,
@@ -23,27 +24,38 @@ import {
   ChevronDown
 } from 'lucide-react';
 
-// Mock WebSocket for demo (would connect to real backend)
-const useWebSocket = (url) => {
-  const [isConnected, setIsConnected] = useState(false);
-  const [messages, setMessages] = useState([]);
-  
-  useEffect(() => {
-    // Simulate connection
-    setTimeout(() => setIsConnected(true), 500);
-  }, []);
-  
-  const sendMessage = (message) => {
-    // Simulate sending message
-    console.log('Sending:', message);
-  };
-  
-  return { isConnected, messages, sendMessage };
-};
+// Import page components
+import HomePage from './pages/HomePage';
+import ProductsPage from './pages/ProductsPage';
+import OffersPage from './pages/OffersPage';
+import CartPage from './pages/CartPage';
+import ProductPage from './pages/ProductPage';
+
+// Import components
+import VoiceVisualizer from './components/VoiceVisualizer';
+
+// Import hooks
+import { useVoiceAssistantNative } from './hooks/useVoiceAssistantNative';
+import { useCart } from './hooks/useCart';
 
 // Voice Assistant Button Component
-const VoiceAssistantButton = ({ onClick, isListening }) => {
+const VoiceAssistantButton = ({ 
+  isListening, 
+  isConnected, 
+  error, 
+  onToggleListening, 
+  browserSupportsSpeechRecognition 
+}) => {
   const [isHovered, setIsHovered] = useState(false);
+  
+  const handleClick = () => {
+    if (!browserSupportsSpeechRecognition) {
+      console.warn('Speech recognition not supported');
+      alert('Il riconoscimento vocale non è disponibile nel tuo browser. Prova con Chrome o Edge per la migliore esperienza.');
+      return;
+    }
+    onToggleListening();
+  };
   
   return (
     <motion.div
@@ -53,16 +65,19 @@ const VoiceAssistantButton = ({ onClick, isListening }) => {
       transition={{ delay: 0.5, type: "spring", stiffness: 260, damping: 20 }}
     >
       <motion.button
-        onClick={onClick}
+        onClick={handleClick}
         onHoverStart={() => setIsHovered(true)}
         onHoverEnd={() => setIsHovered(false)}
         className={`relative group ${
           isListening 
             ? 'bg-gradient-to-r from-purple-600 to-pink-600' 
             : 'bg-gradient-to-r from-blue-600 to-purple-600'
-        } p-6 rounded-full shadow-2xl text-white overflow-hidden`}
-        whileHover={{ scale: 1.1 }}
-        whileTap={{ scale: 0.95 }}
+        } p-6 rounded-full shadow-2xl text-white overflow-hidden ${
+          !isConnected ? 'opacity-50' : ''
+        }`}
+        whileHover={{ scale: isConnected ? 1.1 : 1 }}
+        whileTap={{ scale: isConnected ? 0.95 : 1 }}
+        disabled={!isConnected}
       >
         {/* Animated background */}
         <motion.div
@@ -119,7 +134,7 @@ const VoiceAssistantButton = ({ onClick, isListening }) => {
         </motion.div>
         
         {/* Sparkles */}
-        {isHovered && (
+        {isHovered && isConnected && (
           <motion.div
             className="absolute -top-1 -right-1"
             initial={{ scale: 0 }}
@@ -133,7 +148,7 @@ const VoiceAssistantButton = ({ onClick, isListening }) => {
       
       {/* Tooltip */}
       <AnimatePresence>
-        {isHovered && !isListening && (
+        {isHovered && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -142,355 +157,57 @@ const VoiceAssistantButton = ({ onClick, isListening }) => {
           >
             <div className="flex items-center gap-2">
               <Sparkles size={16} className="text-yellow-300" />
-              <span>Parla con AIVA - Il tuo Personal Shopper AI</span>
+              <span>
+                {!isConnected 
+                  ? 'Connessione in corso...' 
+                  : isListening 
+                    ? 'Clicca per fermare l\'ascolto' 
+                    : 'Parla con AIVA - Il tuo Personal Shopper AI'
+                }
+              </span>
             </div>
             <div className="absolute bottom-0 right-8 transform translate-y-1/2 rotate-45 w-2 h-2 bg-gray-900" />
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
-  );
-};
-
-// Product Card Component
-const ProductCard = ({ product, onAddToCart }) => {
-  const [isHovered, setIsHovered] = useState(false);
-  
-  return (
+      
+      {/* Error message */}
+      {error && (
     <motion.div
-      className="bg-white rounded-xl shadow-sm overflow-hidden cursor-pointer"
-      whileHover={{ y: -8, shadow: "xl" }}
-      transition={{ type: "spring", stiffness: 300 }}
-      onHoverStart={() => setIsHovered(true)}
-      onHoverEnd={() => setIsHovered(false)}
-    >
-      <div className="relative overflow-hidden h-72 bg-gray-100">
-        <motion.img
-          src={product.image}
-          alt={product.name}
-          className="w-full h-full object-cover"
-          animate={{ scale: isHovered ? 1.1 : 1 }}
-          transition={{ duration: 0.3 }}
-        />
-        {product.discount && (
-          <motion.div
-            className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-bold"
-            initial={{ rotate: -15 }}
-            animate={{ rotate: isHovered ? 0 : -15 }}
-          >
-            -{product.discount}%
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="absolute bottom-full mb-2 right-0 bg-red-500 text-white text-sm py-2 px-4 rounded-lg whitespace-nowrap"
+        >
+          {error}
           </motion.div>
         )}
-        <motion.div
-          className="absolute top-4 right-4"
-          whileHover={{ scale: 1.2 }}
-          whileTap={{ scale: 0.9 }}
-        >
-          <button className="p-2 bg-white rounded-full shadow-md hover:bg-gray-100">
-            <Heart size={20} className="text-gray-600" />
-          </button>
-        </motion.div>
-      </div>
-      
-      <div className="p-4">
-        <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">{product.brand}</p>
-        <h3 className="font-semibold text-gray-900 mb-2">{product.name}</h3>
-        <div className="flex items-center gap-2 mb-3">
-          <div className="flex items-center">
-            {[...Array(5)].map((_, i) => (
-              <Star
-                key={i}
-                size={14}
-                className={i < Math.floor(product.rating) ? 'text-yellow-400 fill-current' : 'text-gray-300'}
-              />
-            ))}
-          </div>
-          <span className="text-xs text-gray-500">({product.reviews})</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <div>
-            {product.originalPrice && (
-              <span className="text-sm text-gray-400 line-through mr-2">
-                €{product.originalPrice}
-              </span>
-            )}
-            <span className="text-xl font-bold text-gray-900">€{product.price}</span>
-          </div>
-          <motion.button
-            onClick={() => onAddToCart(product)}
-            className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <ShoppingCart size={20} />
-          </motion.button>
-        </div>
-      </div>
     </motion.div>
   );
 };
 
-// Hero Section Component
-const HeroSection = () => {
-  return (
-    <motion.section
-      className="relative bg-gradient-to-br from-blue-50 to-purple-50 py-20 px-4 overflow-hidden"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.5 }}
-    >
-      <div className="max-w-7xl mx-auto">
-        <div className="grid md:grid-cols-2 gap-12 items-center">
-          <motion.div
-            initial={{ x: -50, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-          >
-            <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-              Il Futuro dello
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600"> Shopping</span> è
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600"> Vocale</span>
-            </h1>
-            <p className="text-xl text-gray-600 mb-8">
-              Scopri AIVA, il tuo personal shopper AI che ti aiuta a trovare l'outfit perfetto con comandi vocali in italiano.
-            </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-              <motion.button
-                className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold rounded-full shadow-lg hover:shadow-xl transform transition"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                Inizia Shopping Vocale
-              </motion.button>
-              <motion.button
-                className="px-8 py-4 border-2 border-gray-300 text-gray-700 font-semibold rounded-full hover:border-gray-400"
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                Scopri di Più
-              </motion.button>
-            </div>
-          </motion.div>
-          
-          <motion.div
-            className="relative"
-            initial={{ x: 50, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            transition={{ delay: 0.4 }}
-          >
-            <div className="relative w-full h-96 bg-gradient-to-br from-blue-400 to-purple-400 rounded-3xl overflow-hidden">
-              <motion.div
-                className="absolute inset-0 bg-white/20"
-                animate={{
-                  backgroundImage: [
-                    'radial-gradient(circle at 20% 80%, transparent 50%, rgba(255,255,255,0.3) 50%)',
-                    'radial-gradient(circle at 80% 20%, transparent 50%, rgba(255,255,255,0.3) 50%)',
-                    'radial-gradient(circle at 20% 80%, transparent 50%, rgba(255,255,255,0.3) 50%)'
-                  ]
-                }}
-                transition={{ duration: 4, repeat: Infinity }}
-              />
-              <div className="absolute inset-0 flex items-center justify-center">
-                <motion.div
-                  animate={{ 
-                    y: [0, -10, 0],
-                    rotate: [0, 5, -5, 0]
-                  }}
-                  transition={{ duration: 4, repeat: Infinity }}
-                  className="text-white"
-                >
-                  <Mic size={120} />
-                </motion.div>
-              </div>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-      
-      {/* Floating elements */}
-      <motion.div
-        className="absolute top-20 right-10 text-blue-200"
-        animate={{ y: [0, 20, 0], rotate: 360 }}
-        transition={{ duration: 20, repeat: Infinity }}
-      >
-        <Sparkles size={40} />
-      </motion.div>
-      <motion.div
-        className="absolute bottom-20 left-10 text-purple-200"
-        animate={{ y: [0, -20, 0], rotate: -360 }}
-        transition={{ duration: 15, repeat: Infinity }}
-      >
-        <ShoppingBag size={40} />
-      </motion.div>
-    </motion.section>
-  );
-};
-
-// Features Section
-const FeaturesSection = () => {
-  const features = [
-    {
-      icon: <Mic />,
-      title: "Comandi Vocali",
-      description: "Parla naturalmente in italiano per cercare e acquistare prodotti"
-    },
-    {
-      icon: <Sparkles />,
-      title: "AI Intelligente",
-      description: "AIVA capisce le tue preferenze e suggerisce outfit perfetti"
-    },
-    {
-      icon: <Truck />,
-      title: "Spedizione Veloce",
-      description: "Consegna in 24-48h, gratis sopra i 100€"
-    },
-    {
-      icon: <Shield />,
-      title: "Pagamenti Sicuri",
-      description: "Transazioni protette con crittografia avanzata"
-    }
-  ];
-  
-  return (
-    <section className="py-20 px-4">
-      <div className="max-w-7xl mx-auto">
-        <motion.div
-          className="text-center mb-16"
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true }}
-        >
-          <h2 className="text-4xl font-bold text-gray-900 mb-4">
-            Perché Scegliere AIVA
-          </h2>
-          <p className="text-xl text-gray-600">
-            Un'esperienza di shopping rivoluzionaria
-          </p>
-        </motion.div>
-        
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-          {features.map((feature, index) => (
-            <motion.div
-              key={index}
-              className="text-center"
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ delay: index * 0.1 }}
-            >
-              <motion.div
-                className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-100 to-purple-100 rounded-2xl mb-4"
-                whileHover={{ scale: 1.1, rotate: 5 }}
-              >
-                <div className="text-blue-600">
-                  {React.cloneElement(feature.icon, { size: 32 })}
-                </div>
-              </motion.div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                {feature.title}
-              </h3>
-              <p className="text-gray-600">
-                {feature.description}
-              </p>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-};
-
-// Main App Component
-export default function App() {
-  const [isListening, setIsListening] = useState(false);
-  const [cartItems, setCartItems] = useState([]);
-  const [showCart, setShowCart] = useState(false);
-  const [currentPage, setCurrentPage] = useState('home');
+// Navigation Component
+const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  
-  // Mock products
-  const products = [
-    {
-      id: 1,
-      name: "T-Shirt Basic Cotone Bio",
-      brand: "EcoWear",
-      price: 19.90,
-      originalPrice: 29.90,
-      discount: 33,
-      image: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400",
-      rating: 4.6,
-      reviews: 234
-    },
-    {
-      id: 2,
-      name: "Felpa con Cappuccio",
-      brand: "Street Urban",
-      price: 59.90,
-      originalPrice: 79.90,
-      discount: 25,
-      image: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400",
-      rating: 4.8,
-      reviews: 312
-    },
-    {
-      id: 3,
-      name: "Jeans Slim Fit",
-      brand: "Denim Co",
-      price: 79.90,
-      originalPrice: 99.90,
-      discount: 20,
-      image: "https://images.unsplash.com/photo-1542272604-787c3835535d?w=400",
-      rating: 4.7,
-      reviews: 456
-    },
-    {
-      id: 4,
-      name: "Sneakers Vintage",
-      brand: "Retro Kicks",
-      price: 99.90,
-      originalPrice: 139.90,
-      discount: 29,
-      image: "https://images.unsplash.com/photo-1549298916-b41d501d3772?w=400",
-      rating: 4.8,
-      reviews: 289
-    },
-    {
-      id: 5,
-      name: "Borsa a Tracolla",
-      brand: "Urban Bags",
-      price: 89.90,
-      originalPrice: 129.90,
-      discount: 31,
-      image: "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=400",
-      rating: 4.8,
-      reviews: 234
-    },
-    {
-      id: 6,
-      name: "Giacca in Pelle",
-      brand: "Aviator Style",
-      price: 299.90,
-      originalPrice: 449.90,
-      discount: 33,
-      image: "https://images.unsplash.com/photo-1551028719-00167b16eac5?w=400",
-      rating: 4.9,
-      reviews: 67
-    }
+  const location = useLocation();
+
+  const navigationItems = [
+    { id: 'products', label: 'Prodotti', icon: '📦', path: '/products' },
+    { id: 'offers', label: 'Offerte', icon: '🏷️', path: '/offers' },
+    { id: 'cart', label: 'Carrello', icon: '🛒', path: '/cart', badge: cartItemsCount }
   ];
-  
-  const handleVoiceAssistant = () => {
-    setIsListening(!isListening);
-    // Here would connect to WebSocket and handle voice
+
+  const getCurrentPage = () => {
+    const path = location.pathname;
+    if (path === '/') return 'home';
+    if (path === '/products') return 'products';
+    if (path === '/offers') return 'offers';
+    if (path === '/cart') return 'cart';
+    return 'home';
   };
-  
-  const handleAddToCart = (product) => {
-    setCartItems([...cartItems, product]);
-    // Show toast notification
-  };
+
+  const currentPage = getCurrentPage();
   
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Navigation */}
       <motion.nav
         className="sticky top-0 z-40 bg-white shadow-sm"
         initial={{ y: -100 }}
@@ -500,17 +217,26 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-8">
-              <motion.h1
-                className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600"
+              <motion.a
+                href="/"
+                className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600 cursor-pointer select-none"
                 whileHover={{ scale: 1.05 }}
+                style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
               >
                 AIVA Fashion
-              </motion.h1>
+              </motion.a>
               <div className="hidden md:flex items-center gap-6">
-                <a href="#" className="text-gray-700 hover:text-blue-600 transition">Home</a>
-                <a href="#" className="text-gray-700 hover:text-blue-600 transition">Uomo</a>
-                <a href="#" className="text-gray-700 hover:text-blue-600 transition">Donna</a>
-                <a href="#" className="text-gray-700 hover:text-blue-600 transition">Offerte</a>
+              {navigationItems.map((item) => (
+                <a
+                  key={item.id}
+                  href={item.path}
+                  className={`text-gray-700 hover:text-blue-600 transition ${
+                    currentPage === item.id ? 'text-blue-600 font-semibold' : ''
+                  }`}
+                >
+                  {item.label}
+                </a>
+              ))}
               </div>
             </div>
             
@@ -521,21 +247,21 @@ export default function App() {
               <button className="p-2 text-gray-600 hover:text-blue-600">
                 <User size={20} />
               </button>
-              <button 
-                onClick={() => setShowCart(!showCart)}
+            <a 
+              href="/cart"
                 className="relative p-2 text-gray-600 hover:text-blue-600"
               >
                 <ShoppingBag size={20} />
-                {cartItems.length > 0 && (
+              {cartItemsCount > 0 && (
                   <motion.span
                     initial={{ scale: 0 }}
                     animate={{ scale: 1 }}
                     className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center"
                   >
-                    {cartItems.length}
+                  {cartItemsCount}
                   </motion.span>
                 )}
-              </button>
+            </a>
               <button 
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                 className="md:hidden p-2 text-gray-600"
@@ -545,71 +271,46 @@ export default function App() {
             </div>
           </div>
         </div>
-      </motion.nav>
-      
-      {/* Hero Section */}
-      <HeroSection />
-      
-      {/* Features */}
-      <FeaturesSection />
-      
-      {/* Products Section */}
-      <section className="py-20 px-4 bg-white">
-        <div className="max-w-7xl mx-auto">
+
+      {/* Mobile Menu */}
+      <AnimatePresence>
+        {mobileMenuOpen && (
           <motion.div
-            className="flex items-center justify-between mb-8"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            className="md:hidden bg-white border-t"
           >
-            <h2 className="text-3xl font-bold text-gray-900">Prodotti in Evidenza</h2>
-            <button className="flex items-center gap-2 text-blue-600 hover:text-blue-700">
-              Vedi tutti <ChevronRight size={20} />
-            </button>
-          </motion.div>
-          
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {products.map((product, index) => (
-              <motion.div
-                key={product.id}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <ProductCard product={product} onAddToCart={handleAddToCart} />
-              </motion.div>
+            <div className="px-4 py-4 space-y-2">
+              {navigationItems.map((item) => (
+                <a
+                  key={item.id}
+                  href={item.path}
+                  className={`block py-2 px-3 rounded-lg text-gray-700 hover:text-blue-600 hover:bg-blue-50 ${
+                    currentPage === item.id ? 'text-blue-600 font-semibold bg-blue-50' : ''
+                  }`}
+                  onClick={() => setMobileMenuOpen(false)}
+                >
+                  <span className="mr-2">{item.icon}</span>
+                  {item.label}
+                  {item.badge > 0 && (
+                    <span className="ml-2 bg-red-500 text-white text-xs rounded-full px-2 py-1">
+                      {item.badge}
+                    </span>
+                  )}
+                </a>
             ))}
           </div>
-        </div>
-      </section>
-      
-      {/* CTA Section */}
-      <section className="py-20 px-4 bg-gradient-to-br from-blue-600 to-purple-600">
-        <div className="max-w-4xl mx-auto text-center text-white">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-          >
-            <h2 className="text-4xl font-bold mb-4">
-              Prova l'Esperienza Shopping del Futuro
-            </h2>
-            <p className="text-xl mb-8 opacity-90">
-              Clicca sul microfono e dì "Cerco una felpa nera" per iniziare
-            </p>
-            <motion.button
-              className="px-8 py-4 bg-white text-blue-600 font-semibold rounded-full shadow-lg hover:shadow-xl"
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              Attiva Assistente Vocale
-            </motion.button>
           </motion.div>
-        </div>
-      </section>
-      
-      {/* Footer */}
+        )}
+      </AnimatePresence>
+    </motion.nav>
+  );
+};
+
+// Footer Component
+const Footer = () => {
+  return (
       <footer className="bg-gray-900 text-gray-300 py-12 px-4">
         <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-8">
           <div>
@@ -619,10 +320,10 @@ export default function App() {
           <div>
             <h4 className="text-white font-semibold mb-4">Shop</h4>
             <ul className="space-y-2 text-sm">
-              <li><a href="#" className="hover:text-white transition">Uomo</a></li>
-              <li><a href="#" className="hover:text-white transition">Donna</a></li>
-              <li><a href="#" className="hover:text-white transition">Accessori</a></li>
-              <li><a href="#" className="hover:text-white transition">Offerte</a></li>
+            <li><a href="/products" className="hover:text-white transition">Uomo</a></li>
+            <li><a href="/products" className="hover:text-white transition">Donna</a></li>
+            <li><a href="/products" className="hover:text-white transition">Accessori</a></li>
+            <li><a href="/offers" className="hover:text-white transition">Offerte</a></li>
             </ul>
           </div>
           <div>
@@ -653,49 +354,94 @@ export default function App() {
           <p>© 2025 AIVA Fashion - Demo Portfolio Michele Miranda</p>
         </div>
       </footer>
-      
-      {/* Voice Assistant Button */}
-      <VoiceAssistantButton 
-        onClick={handleVoiceAssistant}
-        isListening={isListening}
-      />
-      
-      {/* Cart Drawer - would be a separate component */}
-      <AnimatePresence>
-        {showCart && (
-          <motion.div
-            initial={{ x: '100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '100%' }}
-            className="fixed right-0 top-0 h-full w-96 bg-white shadow-xl z-50 p-6"
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Carrello</h2>
-              <button onClick={() => setShowCart(false)}>
-                <X size={24} />
-              </button>
-            </div>
-            {cartItems.length === 0 ? (
-              <p className="text-gray-500">Il carrello è vuoto</p>
-            ) : (
-              <div>
-                {cartItems.map((item, index) => (
-                  <div key={index} className="flex items-center gap-4 mb-4">
-                    <img src={item.image} alt={item.name} className="w-16 h-16 object-cover rounded" />
-                    <div className="flex-1">
-                      <h4 className="font-semibold">{item.name}</h4>
-                      <p className="text-gray-600">€{item.price}</p>
-                    </div>
-                  </div>
-                ))}
-                <button className="w-full py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                  Procedi al Checkout
-                </button>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
   );
-}
+};
+
+// Main App Component
+export default function App() {
+  const location = useLocation();
+  
+  // Cart hook for real cart count
+  const { cartCount } = useCart();
+  
+  // Voice assistant hook
+  const {
+    isListening,
+    isConnected,
+    messages,
+    isProcessing,
+    error,
+    transcript,
+    isSpeaking,
+    toggleListening,
+    clearError,
+    browserSupportsSpeechRecognition
+  } = useVoiceAssistantNative();
+
+  // Clear error after 5 seconds
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => {
+        clearError();
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error, clearError]);
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Navigation */}
+             <Navigation
+               cartItemsCount={cartCount}
+               isListening={isListening}
+               onVoiceToggle={toggleListening}
+             />
+      
+      {/* Main Content */}
+      <AnimatePresence mode="wait">
+          <motion.div
+          key={location.pathname}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
+          transition={{ duration: 0.3 }}
+        >
+                 <Routes>
+                   <Route path="/" element={<HomePage onVoiceToggle={toggleListening} />} />
+                   <Route path="/products" element={<ProductsPage />} />
+                   <Route path="/products/:id" element={<ProductPage />} />
+                   <Route path="/offers" element={<OffersPage />} />
+                   <Route path="/cart" element={<CartPage />} />
+                 </Routes>
+          </motion.div>
+      </AnimatePresence>
+      
+      {/* Footer */}
+      <Footer />
+      
+             {/* Voice Assistant Button */}
+             <VoiceAssistantButton
+               isListening={isListening}
+               isConnected={isConnected}
+               error={error}
+               onToggleListening={toggleListening}
+               browserSupportsSpeechRecognition={browserSupportsSpeechRecognition}
+             />
+
+      {/* Voice Visualizer */}
+      <VoiceVisualizer
+        isListening={isListening}
+        isProcessing={isProcessing}
+        isConnected={isConnected}
+        isSpeaking={isSpeaking}
+        transcript={transcript}
+        messages={messages}
+        onClose={() => {
+          if (isListening) {
+            toggleListening();
+          }
+        }}
+      />
+           </div>
+         );
+       }

@@ -3,7 +3,17 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react({
+    babel: {
+      plugins: ['@babel/plugin-transform-runtime']
+    }
+  })],
+  define: {
+    global: 'globalThis',
+  },
+  optimizeDeps: {
+    include: ['regenerator-runtime/runtime', 'react-speech-recognition']
+  },
   server: {
     port: 5173,
     proxy: {
