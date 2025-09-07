@@ -1,38 +1,155 @@
-// src/hooks/useVoiceAssistantNative.js - Native Voice Assistant Hook
+// src/hooks/useVoiceAssistantNative.js - Fixed Function Execution
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { createWebSocketConnection } from '../services/api';
+import { useCart } from './useCart';
+import useStore from '../store';
 
 export const useVoiceAssistantNative = () => {
   const [isListening, setIsListening] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isExecutingFunction, setIsExecutingFunction] = useState(false);
+  const [currentFunction, setCurrentFunction] = useState(null);
   const [error, setError] = useState(null);
   const [transcript, setTranscript] = useState('');
-  const [isSpeaking, setIsSpeaking] = useState(false); // New state for TTS
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isUserTurn, setIsUserTurn] = useState(true);
+  
+  const navigate = useNavigate();
+  const { addToCart } = useCart();
+  const { setSearchQuery } = useStore();
   
   const wsRef = useRef(null);
   const sessionIdRef = useRef(`session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const recognitionRef = useRef(null);
+  const pendingFunctionRef = useRef(null);
 
-  // Check browser support for speech recognition
+  // Browser support check
   const browserSupportsSpeechRecognition = () => {
     return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   };
 
-  // Welcome messages for different conversation starts
-  const getWelcomeMessage = () => {
-    const messages = [
-      "Ciao! Sono AIVA, la tua assistente per lo shopping. Come posso aiutarti oggi?",
-      "Salve! Sono AIVA, il tuo personal shopper virtuale. Dimmi cosa stai cercando!",
-      "Buongiorno! Sono AIVA e sono qui per aiutarti a trovare l'outfit perfetto. Cosa ti serve?",
-      "Ciao! Sono AIVA, la tua assistente di moda. Parla pure, sono qui per te!",
-      "Salve! Sono AIVA e posso aiutarti a trovare qualsiasi capo di abbigliamento. Cosa cerchi?"
-    ];
-    return messages[Math.floor(Math.random() * messages.length)];
-  };
+  // Execute AI Functions - ENHANCED
+  const executeFunction = useCallback(async (functionName, parameters) => {
+    console.log('🎯 Executing function:', functionName, parameters);
+    setIsExecutingFunction(true);
+    setCurrentFunction(functionName);
+    
+    // Stop listening during execution
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      setIsListening(false);
+    }
+    
+    try {
+      // Add delay to show execution state
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      switch (functionName) {
+        case 'navigate_to_page':
+        case 'navigate':
+          const pageMap = {
+            'home': '/',
+            'prodotti': '/products',
+            'products': '/products',
+            'offerte': '/offers',
+            'offers': '/offers',
+            'carrello': '/cart',
+            'cart': '/cart',
+          };
+          const path = pageMap[parameters.page] || '/';
+          console.log('📍 Navigating to:', path);
+          navigate(path);
+          break;
+          
+        case 'search_products':
+          const query = parameters.query || parameters.filters?.query || '';
+          console.log('🔍 Searching for:', query);
+          
+          // Navigate to products page with search
+          navigate('/products');
+          
+          // Set search query after navigation
+          setTimeout(() => {
+            const searchInput = document.querySelector('input[placeholder="Cerca prodotti..."]');
+            if (searchInput) {
+              searchInput.value = query;
+              searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            setSearchQuery(query);
+          }, 100);
+          break;
+          
+        case 'get_product_details':
+          const productId = parameters.product_id;
+          console.log('📦 Showing product:', productId);
+          navigate(`/products/${productId}`);
+          break;
+          
+        case 'add_to_cart':
+          console.log('🛒 Adding to cart:', parameters);
+          // Get product from store or create mock
+          const mockProduct = {
+            id: parameters.product_id || '550e8400-0001-41d4-a716-446655440001',
+            name: parameters.product_name || 'Prodotto',
+            price: parameters.price || 49.90,
+            brand: 'Fashion Brand'
+          };
+          
+          await addToCart(
+            mockProduct,
+            parameters.size || 'M',
+            parameters.color || 'nero',
+            parameters.quantity || 1
+          );
+          
+          // Show success feedback
+          setTimeout(() => {
+            alert('Prodotto aggiunto al carrello!');
+          }, 500);
+          break;
+          
+        case 'get_cart_summary':
+        case 'view_cart':
+          console.log('🛒 Opening cart');
+          navigate('/cart');
+          break;
+          
+        case 'get_current_promotions':
+        case 'show_offers':
+          console.log('🏷️ Showing offers');
+          navigate('/offers');
+          break;
+          
+        case 'get_recommendations':
+          console.log('💡 Getting recommendations');
+          navigate('/products');
+          break;
+          
+        default:
+          console.warn('❓ Unknown function:', functionName);
+      }
+      
+    } catch (error) {
+      console.error('❌ Error executing function:', error);
+      setError('Errore nell\'esecuzione del comando');
+    } finally {
+      // Clear execution state
+      setTimeout(() => {
+        setIsExecutingFunction(false);
+        setCurrentFunction(null);
+        
+        // Restart listening if needed
+        if (!isSpeaking) {
+          restartListening();
+        }
+      }, 1000);
+    }
+  }, [navigate, addToCart, setSearchQuery, isSpeaking]);
 
   // Initialize speech recognition
   const initializeSpeechRecognition = useCallback(() => {
@@ -43,68 +160,82 @@ export const useVoiceAssistantNative = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'it-IT';
     recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
-      console.log('Speech recognition started');
+      console.log('🎤 Recognition started');
       setIsListening(true);
       setError(null);
-      // Random welcome message
-      speak(getWelcomeMessage());
+      setIsUserTurn(true);
     };
 
     recognition.onresult = (event) => {
-      let finalTranscript = '';
-      let interimTranscript = '';
+      if (!isSpeaking && isUserTurn && !isExecutingFunction) {
+        let finalTranscript = '';
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          }
         }
-      }
 
-      if (finalTranscript) {
-        setTranscript(finalTranscript);
-        handleVoiceCommand(finalTranscript);
-      } else if (interimTranscript) {
-        setTranscript(interimTranscript);
+        if (finalTranscript) {
+          console.log('💬 User said:', finalTranscript);
+          setTranscript(finalTranscript);
+          handleVoiceCommand(finalTranscript);
+          if (recognitionRef.current) {
+            recognitionRef.current.stop();
+          }
+        }
       }
     };
 
     recognition.onerror = (event) => {
-      console.error('Speech recognition error:', event.error);
+      if (event.error === 'aborted') return;
+      
+      console.error('❌ Recognition error:', event.error);
       setIsListening(false);
       
-      switch (event.error) {
-        case 'not-allowed':
-          setError('Permessi microfono non concessi. Abilita il microfono nelle impostazioni del browser.');
-          break;
-        case 'no-speech':
-          setError('Nessun parlato rilevato. Riprova.');
-          break;
-        case 'network':
-          setError('Errore di rete. Controlla la connessione.');
-          break;
-        default:
-          setError(`Errore riconoscimento vocale: ${event.error}`);
+      if (event.error === 'no-speech') {
+        restartListening();
+      } else if (event.error !== 'aborted') {
+        setError(`Errore: ${event.error}`);
       }
     };
 
     recognition.onend = () => {
-      console.log('Speech recognition ended');
+      console.log('🔚 Recognition ended');
       setIsListening(false);
+      
+      if (isUserTurn && !isSpeaking && !isExecutingFunction) {
+        restartListening();
+      }
     };
 
     return recognition;
-  }, []);
+  }, [isSpeaking, isUserTurn, isExecutingFunction]);
 
-  // WebSocket connection management
+  // Restart listening
+  const restartListening = useCallback(() => {
+    if (!isSpeaking && isUserTurn && !isExecutingFunction) {
+      setTimeout(() => {
+        if (recognitionRef.current && !isSpeaking && !isExecutingFunction) {
+          try {
+            recognitionRef.current.start();
+            console.log('🔄 Restarted listening');
+          } catch (e) {
+            console.log('Already listening');
+          }
+        }
+      }, 500);
+    }
+  }, [isSpeaking, isUserTurn, isExecutingFunction]);
+
+  // WebSocket connection
   useEffect(() => {
     const connectWebSocket = () => {
       try {
@@ -112,7 +243,7 @@ export const useVoiceAssistantNative = () => {
         wsRef.current = ws;
 
         ws.onopen = () => {
-          console.log('WebSocket connected');
+          console.log('🔌 WebSocket connected');
           setIsConnected(true);
           reconnectAttemptsRef.current = 0;
         };
@@ -122,7 +253,7 @@ export const useVoiceAssistantNative = () => {
             const data = JSON.parse(event.data);
             handleWebSocketMessage(data);
           } catch (error) {
-            console.error('Error parsing WebSocket message:', error);
+            console.error('Parse error:', error);
           }
         };
 
@@ -137,8 +268,8 @@ export const useVoiceAssistantNative = () => {
           attemptReconnect();
         };
       } catch (error) {
-        console.error('Failed to create WebSocket:', error);
-        setError('Impossibile connettersi al server');
+        console.error('Connection failed:', error);
+        setError('Impossibile connettersi');
       }
     };
 
@@ -162,113 +293,123 @@ export const useVoiceAssistantNative = () => {
     };
   }, []);
 
-  // Text-to-Speech function with consistent voice
-  const speak = useCallback((text) => {
+  // Text-to-Speech
+  const speak = useCallback((text, callback) => {
     if ('speechSynthesis' in window) {
+      if (recognitionRef.current) {
+        recognitionRef.current.abort();
+        setIsListening(false);
+      }
+      
+      window.speechSynthesis.cancel();
+      
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'it-IT';
-      utterance.rate = 1.1; // Faster voice as requested
-      utterance.pitch = 1.2; // Higher pitch for more feminine sound
+      utterance.rate = 1.0;
+      utterance.pitch = 1.3;
+      utterance.volume = 0.9;
       
-      // Select consistent Italian female voice with better detection
-      const voices = speechSynthesis.getVoices();
-      console.log('Available voices:', voices.map(v => ({ name: v.name, lang: v.lang })));
-      
-      // Try multiple strategies to find female voice
-      let italianFemaleVoice = voices.find(voice => 
-        voice.lang.startsWith('it') && 
-        (voice.name.toLowerCase().includes('female') || 
-         voice.name.toLowerCase().includes('donna') ||
-         voice.name.toLowerCase().includes('woman'))
-      );
-      
-      // Fallback: try Google/Microsoft voices (often female by default)
-      if (!italianFemaleVoice) {
-        italianFemaleVoice = voices.find(voice => 
-          voice.lang.startsWith('it') && 
-          (voice.name.toLowerCase().includes('google') || 
-           voice.name.toLowerCase().includes('microsoft'))
-        );
-      }
-      
-      // Fallback: any Italian voice
-      if (!italianFemaleVoice) {
-        italianFemaleVoice = voices.find(voice => voice.lang.startsWith('it'));
-      }
-      
-      // Fallback: try any female voice
-      if (!italianFemaleVoice) {
-        italianFemaleVoice = voices.find(voice => 
-          voice.name.toLowerCase().includes('female') || 
-          voice.name.toLowerCase().includes('woman') ||
-          voice.name.toLowerCase().includes('donna')
-        );
-      }
-      
-      if (italianFemaleVoice) {
-        utterance.voice = italianFemaleVoice;
-        console.log('Using voice:', italianFemaleVoice.name, italianFemaleVoice.lang);
-      } else {
-        console.log('No Italian voice found, using default');
-      }
-      
-      // CRITICAL: Stop listening completely while speaking
-      if (recognitionRef.current && isListening) {
-        console.log('Stopping recognition to prevent audio loop');
-        recognitionRef.current.stop();
-        setIsListening(false);
-        // Clear any pending recognition
-        recognitionRef.current = null;
-      }
-      
-      utterance.onstart = () => {
-        console.log('AI speaking started - microphone should be OFF');
-        setIsSpeaking(true);
-        // Ensure microphone is completely off
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
-          recognitionRef.current = null;
+      const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        const italianVoice = voices.find(v => v.lang.startsWith('it'));
+        if (italianVoice) {
+          utterance.voice = italianVoice;
         }
       };
       
-      utterance.onend = () => {
-        console.log('AI speaking ended - restarting listening for user response');
-        setIsSpeaking(false);
-        // Restart listening after AI finishes speaking to allow user response
-        setTimeout(() => {
-          if (recognitionRef.current) {
-            recognitionRef.current.start();
-            setIsListening(true);
-          }
-        }, 1000); // 1 second delay to allow AI to finish
+      loadVoices();
+      
+      utterance.onstart = () => {
+        console.log('🔊 Speaking:', text);
+        setIsSpeaking(true);
+        setIsUserTurn(false);
       };
       
-      speechSynthesis.speak(utterance);
+      utterance.onend = () => {
+        console.log('🔇 Finished speaking');
+        setIsSpeaking(false);
+        setIsUserTurn(true);
+        
+        // Execute pending function if any
+        if (pendingFunctionRef.current) {
+          const { name, params } = pendingFunctionRef.current;
+          pendingFunctionRef.current = null;
+          executeFunction(name, params);
+        } else if (!isExecutingFunction) {
+          // Restart listening
+          setTimeout(() => {
+            if (!recognitionRef.current) {
+              recognitionRef.current = initializeSpeechRecognition();
+            }
+            if (recognitionRef.current) {
+              try {
+                recognitionRef.current.start();
+              } catch (e) {
+                console.log('Could not restart');
+              }
+            }
+          }, 800);
+        }
+        
+        if (callback) callback();
+      };
+      
+      window.speechSynthesis.speak(utterance);
     }
-  }, [isListening]);
+  }, [initializeSpeechRecognition, isExecutingFunction, executeFunction]);
 
-  // Handle WebSocket messages
+  // Handle WebSocket messages - ENHANCED
   const handleWebSocketMessage = (data) => {
-    console.log('WebSocket message received:', data);
+    console.log('📨 WebSocket message:', data);
     setMessages(prev => [...prev, data]);
     
     switch (data.type) {
       case 'processing_start':
         setIsProcessing(true);
         break;
-      case 'response':
-      case 'function_complete':
-      case 'stream_complete':
+        
+      case 'function_start':
         setIsProcessing(false);
-        // Speak the AI response
-        const responseText = data.text || data.message || data.content;
-        if (responseText) {
-          speak(responseText);
+        if (data.message) {
+          speak(data.message);
         }
         break;
+        
+      case 'function_complete':
+      case 'complete':
+        setIsProcessing(false);
+        
+        // Store function to execute after speaking
+        if (data.function && data.parameters) {
+          console.log('📋 Function ready:', data.function);
+          pendingFunctionRef.current = {
+            name: data.function,
+            params: data.parameters
+          };
+        }
+        
+        // Speak response if any
+        const message = data.message || data.text;
+        if (message) {
+          speak(message);
+        } else if (pendingFunctionRef.current) {
+          // If no message, execute function immediately
+          const { name, params } = pendingFunctionRef.current;
+          pendingFunctionRef.current = null;
+          executeFunction(name, params);
+        }
+        break;
+        
+      case 'response':
+        setIsProcessing(false);
+        if (data.message || data.text) {
+          speak(data.message || data.text);
+        }
+        break;
+        
       case 'error':
         setIsProcessing(false);
-        setError(data.message || 'Errore del server');
+        setError(data.message || 'Errore');
         break;
     }
   };
@@ -276,6 +417,7 @@ export const useVoiceAssistantNative = () => {
   // Send message to WebSocket
   const sendMessage = useCallback((message) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('📤 Sending:', message);
       wsRef.current.send(JSON.stringify(message));
     } else {
       console.error('WebSocket not connected');
@@ -287,109 +429,96 @@ export const useVoiceAssistantNative = () => {
   const handleVoiceCommand = useCallback((text) => {
     if (!text.trim()) return;
 
-    // Add user message to chat
     setMessages(prev => [...prev, { 
       type: 'user', 
       text,
       timestamp: new Date().toISOString()
     }]);
     
-    // Send to backend via WebSocket
+    setTranscript('');
+    
     sendMessage({
       type: 'voice_command',
       text: text,
       context: {
         session_id: sessionIdRef.current,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        current_page: window.location.pathname
       }
     });
   }, [sendMessage]);
 
   // Toggle listening
   const toggleListening = useCallback(async () => {
+    console.log('🎤 Toggle listening:', isListening);
+    
     if (!browserSupportsSpeechRecognition()) {
-      setError('Il tuo browser non supporta il riconoscimento vocale. Usa Chrome o Edge.');
+      setError('Browser non supporta il riconoscimento vocale');
       return;
     }
 
     setError(null);
 
     if (isListening) {
-      // Stop listening
+      // Stop everything
       if (recognitionRef.current) {
         recognitionRef.current.stop();
+        recognitionRef.current = null;
       }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+      setIsListening(false);
+      setIsSpeaking(false);
+      setIsExecutingFunction(false);
     } else {
       // Start listening
       try {
-        // Request microphone permission
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach(track => track.stop()); // Stop the stream, we just needed permission
+        stream.getTracks().forEach(track => track.stop());
         
-        // Initialize and start recognition
         recognitionRef.current = initializeSpeechRecognition();
         if (recognitionRef.current) {
           recognitionRef.current.start();
+          speak("Ciao! Sono AIVA. Come posso aiutarti con lo shopping?");
         }
       } catch (error) {
-        console.error('Microphone permission denied:', error);
-        setError('Permessi microfono non concessi. Abilita il microfono nelle impostazioni del browser.');
+        console.error('Microphone error:', error);
+        setError('Permessi microfono negati');
       }
     }
-  }, [isListening, initializeSpeechRecognition]);
+  }, [isListening, initializeSpeechRecognition, speak]);
 
-  // Start listening
-  const startListening = useCallback(() => {
-    if (!isListening) {
-      toggleListening();
-    }
-  }, [isListening, toggleListening]);
-
-  // Stop listening
-  const stopListening = useCallback(() => {
-    if (isListening) {
-      toggleListening();
-    }
-  }, [isListening, toggleListening]);
-
-  // Clear messages
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-  }, []);
-
-  // Clear error
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
-
-  // Cleanup on unmount
+  // Cleanup
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
-        recognitionRef.current.stop();
+        recognitionRef.current.abort();
+      }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
     };
   }, []);
 
   return {
-    // State
+    // States
     isListening,
     isConnected,
     messages,
     isProcessing,
+    isExecutingFunction,
+    currentFunction,
     error,
     transcript,
-    isSpeaking, // Add speaking state
+    isSpeaking,
+    isUserTurn,
     
     // Actions
     toggleListening,
-    startListening,
-    stopListening,
-    clearMessages,
-    clearError,
+    clearError: () => setError(null),
     
     // Capabilities
     browserSupportsSpeechRecognition: browserSupportsSpeechRecognition(),
-    isMicrophoneAvailable: true // We'll check this when needed
   };
 };

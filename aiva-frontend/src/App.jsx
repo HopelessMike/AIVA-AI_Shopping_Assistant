@@ -370,13 +370,15 @@ export default function App() {
     isConnected,
     messages,
     isProcessing,
+    isExecutingFunction,
+    currentFunction,
     error,
     transcript,
     isSpeaking,
     toggleListening,
     clearError,
     browserSupportsSpeechRecognition
-  } = useVoiceAssistantNative();
+  } = useVoiceAssistantNative();;
 
   // Clear error after 5 seconds
   useEffect(() => {
@@ -426,22 +428,25 @@ export default function App() {
                error={error}
                onToggleListening={toggleListening}
                browserSupportsSpeechRecognition={browserSupportsSpeechRecognition}
-             />
-
-      {/* Voice Visualizer */}
-      <VoiceVisualizer
-        isListening={isListening}
-        isProcessing={isProcessing}
-        isConnected={isConnected}
-        isSpeaking={isSpeaking}
-        transcript={transcript}
-        messages={messages}
-        onClose={() => {
-          if (isListening) {
-            toggleListening();
-          }
-        }}
-      />
+                  />
+        {/* Voice Visualizer - Compact Style */}
+        {(isListening || isProcessing || isSpeaking || isExecutingFunction || error) && (
+          <VoiceVisualizer
+            isListening={isListening}
+            isProcessing={isProcessing}
+            isConnected={isConnected}
+            isSpeaking={isSpeaking}
+            isExecutingFunction={isExecutingFunction}
+            currentFunction={currentFunction}
+            messages={messages}
+            error={error}
+            onClose={() => {
+              console.log('Closing voice assistant');
+              toggleListening();
+              clearError();
+            }}
+          />
+        )}
            </div>
          );
        }
