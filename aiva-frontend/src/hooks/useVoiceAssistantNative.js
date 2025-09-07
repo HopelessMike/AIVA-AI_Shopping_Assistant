@@ -16,6 +16,7 @@ export const useVoiceAssistantNative = () => {
   const [transcript, setTranscript] = useState('');
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isUserTurn, setIsUserTurn] = useState(true);
+  const [isAssistantActive, setIsAssistantActive] = useState(false); // Track if assistant is active
   
   const navigate = useNavigate();
   const { addToCart } = useCart();
@@ -294,12 +295,18 @@ export const useVoiceAssistantNative = () => {
   }, []);
 
   // Text-to-Speech
-  const speak = useCallback((text, callback) => {
+  const speak = useCallback((text, callback, isWelcomeMessage = false) => {
     if ('speechSynthesis' in window) {
+      // CRITICAL: Completely stop recognition and clear reference
       if (recognitionRef.current) {
-        recognitionRef.current.abort();
-        setIsListening(false);
+        try {
+          recognitionRef.current.abort();
+        } catch (e) {
+          console.log('Error aborting recognition:', e);
+        }
+        recognitionRef.current = null; // Clear reference completely
       }
+      setIsListening(false);
       
       window.speechSynthesis.cancel();
       
@@ -323,6 +330,11 @@ export const useVoiceAssistantNative = () => {
         console.log('🔊 Speaking:', text);
         setIsSpeaking(true);
         setIsUserTurn(false);
+        // Ensure microphone is completely off
+        if (recognitionRef.current) {
+          recognitionRef.current.abort();
+          recognitionRef.current = null;
+        }
       };
       
       utterance.onend = () => {
@@ -335,8 +347,9 @@ export const useVoiceAssistantNative = () => {
           const { name, params } = pendingFunctionRef.current;
           pendingFunctionRef.current = null;
           executeFunction(name, params);
-        } else if (!isExecutingFunction) {
-          // Restart listening
+        } else if (isWelcomeMessage) {
+          // Restart listening after welcome message to allow user response
+          console.log('🎤 Restarting listening for user response');
           setTimeout(() => {
             if (!recognitionRef.current) {
               recognitionRef.current = initializeSpeechRecognition();
@@ -344,11 +357,15 @@ export const useVoiceAssistantNative = () => {
             if (recognitionRef.current) {
               try {
                 recognitionRef.current.start();
+                console.log('🎤 Listening for user response');
               } catch (e) {
-                console.log('Could not restart');
+                console.log('Could not restart listening:', e.message);
               }
             }
-          }, 800);
+          }, 1000); // 1 second delay to allow AI to finish
+        } else {
+          // For regular AI responses, don't restart automatically
+          console.log('🎤 Waiting for user to click microphone to continue');
         }
         
         if (callback) callback();
@@ -356,7 +373,7 @@ export const useVoiceAssistantNative = () => {
       
       window.speechSynthesis.speak(utterance);
     }
-  }, [initializeSpeechRecognition, isExecutingFunction, executeFunction]);
+  }, [executeFunction, initializeSpeechRecognition]);
 
   // Handle WebSocket messages - ENHANCED
   const handleWebSocketMessage = (data) => {
@@ -471,8 +488,10 @@ export const useVoiceAssistantNative = () => {
       setIsListening(false);
       setIsSpeaking(false);
       setIsExecutingFunction(false);
+      setIsAssistantActive(false); // Deactivate assistant
     } else {
       // Start listening
+      setIsAssistantActive(true); // Activate assistant first
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
@@ -480,11 +499,12 @@ export const useVoiceAssistantNative = () => {
         recognitionRef.current = initializeSpeechRecognition();
         if (recognitionRef.current) {
           recognitionRef.current.start();
-          speak("Ciao! Sono AIVA. Come posso aiutarti con lo shopping?");
+          speak("Ciao! Sono AIVA. Come posso aiutarti con lo shopping?", null, true); // true = welcome message
         }
       } catch (error) {
         console.error('Microphone error:', error);
         setError('Permessi microfono negati');
+        setIsAssistantActive(false); // Deactivate on error
       }
     }
   }, [isListening, initializeSpeechRecognition, speak]);
@@ -513,6 +533,7 @@ export const useVoiceAssistantNative = () => {
     transcript,
     isSpeaking,
     isUserTurn,
+    isAssistantActive, // Expose assistant active state
     
     // Actions
     toggleListening,

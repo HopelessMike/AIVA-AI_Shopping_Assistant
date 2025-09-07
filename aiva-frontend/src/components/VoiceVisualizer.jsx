@@ -30,6 +30,12 @@ const VoiceVisualizer = ({
   useEffect(() => {
     if (isListening || isProcessing || isSpeaking || isExecutingFunction || error) {
       setIsVisible(true);
+    } else {
+      // Keep visible for a short time after activity stops
+      const timer = setTimeout(() => {
+        setIsVisible(false);
+      }, 2000);
+      return () => clearTimeout(timer);
     }
   }, [isListening, isProcessing, isSpeaking, isExecutingFunction, error]);
 
@@ -104,7 +110,7 @@ const VoiceVisualizer = ({
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -20 }}
-        className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50"
+        className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 flex justify-center"
       >
         <div className="relative">
           {/* Main Container - Compact Style */}
