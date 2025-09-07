@@ -17,7 +17,7 @@ const HomePage = ({ onVoiceToggle }) => {
         transition={{ duration: 0.8 }}
       >
         <div className="max-w-7xl mx-auto">
-          <div className="text-center">
+          <div className="relative z-10 text-center">
             {/* Main Title */}
             <motion.h1 
               className="text-6xl md:text-7xl font-bold mb-8"
@@ -88,7 +88,7 @@ const HomePage = ({ onVoiceToggle }) => {
             </motion.div>
 
             {/* Floating Elements - Many Colorful Shopping Icons */}
-            <div className="absolute inset-0 pointer-events-none">
+            <div className="absolute inset-0 pointer-events-none hidden md:block z-0">
               {/* Top Row */}
               <motion.div
                 className="absolute top-16 left-8 text-pink-400"

@@ -1,4 +1,4 @@
-// src/components/VoiceVisualizer.jsx - Compact ElevenLabs Style
+// src/components/VoiceVisualizer.jsx - VERSIONE CORRETTA
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -10,7 +10,8 @@ import {
   ShoppingBag,
   Search,
   Navigation,
-  Zap
+  Zap,
+  MessageCircle
 } from 'lucide-react';
 
 const VoiceVisualizer = ({ 
@@ -22,30 +23,32 @@ const VoiceVisualizer = ({
   currentFunction,
   messages, 
   error,
-  onClose 
+  onClose,
+  isAssistantActive // ✅ Aggiunto prop mancante
 }) => {
   const [isVisible, setIsVisible] = useState(false);
 
-  // Show/hide based on activity
+  // ✅ CONTROLLO VISIBILITÀ MIGLIORATO - Ora include anche quando assistente è attivo
   useEffect(() => {
-    if (isListening || isProcessing || isSpeaking || isExecutingFunction || error) {
+    if (isListening || isProcessing || isSpeaking || isExecutingFunction || error || isAssistantActive) {
       setIsVisible(true);
     } else {
-      // Keep visible for a short time after activity stops
+      // Mantieni visibile brevemente dopo l'attività
       const timer = setTimeout(() => {
         setIsVisible(false);
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [isListening, isProcessing, isSpeaking, isExecutingFunction, error]);
+  }, [isListening, isProcessing, isSpeaking, isExecutingFunction, error, isAssistantActive]);
 
-  // Get current state
+  // ✅ STATI CORRETTI E PRIORITARI
   const getCurrentState = () => {
     if (error) {
       return {
         icon: X,
-        text: 'Errore',
+        text: 'Errore - Clicca per chiudere',
         color: 'bg-red-500',
+        textColor: 'text-white',
         animate: false
       };
     }
@@ -56,11 +59,13 @@ const VoiceVisualizer = ({
         'search_products': Search,
         'add_to_cart': ShoppingBag,
         'get_cart_summary': ShoppingBag,
+        'get_recommendations': Sparkles,
       };
       return {
         icon: functionIcons[currentFunction] || Zap,
-        text: 'Esecuzione...',
+        text: 'Eseguo comando...',
         color: 'bg-green-500',
+        textColor: 'text-white',
         animate: true
       };
     }
@@ -70,6 +75,7 @@ const VoiceVisualizer = ({
         icon: Volume2,
         text: 'AIVA sta parlando',
         color: 'bg-purple-500',
+        textColor: 'text-white',
         animate: true
       };
     }
@@ -77,8 +83,9 @@ const VoiceVisualizer = ({
     if (isProcessing) {
       return {
         icon: Loader,
-        text: 'Elaborazione...',
+        text: 'Sto pensando...',
         color: 'bg-blue-500',
+        textColor: 'text-white',
         animate: true
       };
     }
@@ -86,130 +93,189 @@ const VoiceVisualizer = ({
     if (isListening) {
       return {
         icon: Mic,
-        text: 'In ascolto...',
+        text: 'Ti sto ascoltando',
         color: 'bg-blue-500',
+        textColor: 'text-white',
         animate: true
       };
     }
     
     return {
-      icon: Sparkles,
-      text: 'AIVA',
-      color: 'bg-gray-500',
+      icon: MessageCircle,
+      text: 'AIVA pronta',
+      color: 'bg-gray-700',
+      textColor: 'text-white',
       animate: false
     };
   };
 
   const state = getCurrentState();
 
+  // ✅ CHIUSURA COMPLETA DELL'ASSISTENTE
+  const handleClose = (e) => {
+    e.stopPropagation();
+    console.log('🔴 VoiceVisualizer: Closing assistant completely');
+    
+    // Nascondi immediatamente
+    setIsVisible(false);
+    
+    // Chiama onClose per fermare tutto l'assistente
+    if (onClose) {
+      onClose();
+    }
+  };
+
   if (!isVisible) return null;
 
   return (
     <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -20 }}
-        className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 flex justify-center"
+        initial={{ opacity: 0, y: -20, scale: 0.9 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: -20, scale: 0.9 }}
+        className="fixed top-6 left-0 right-0 z-50"
+        style={{ pointerEvents: 'none' }}
       >
-        <div className="relative">
-          {/* Main Container - Compact Style */}
+        <div className="relative mx-auto" style={{ width: '400px', maxWidth: '90vw', pointerEvents: 'auto' }}>
+          {/* ✅ CONTAINER PRINCIPALE - DIMENSIONI FISSE */}
           <motion.div
-            className="bg-black/90 backdrop-blur-xl rounded-full px-6 py-3 flex items-center space-x-3 shadow-2xl border border-white/10"
+            className="bg-black/90 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl"
+            style={{ 
+              height: '80px', // ✅ ALTEZZA FISSA
+              width: '100%'
+            }}
             initial={{ scale: 0.9 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", damping: 20 }}
           >
-            {/* Animated Icon Container */}
-            <div className="relative">
-              <motion.div
-                className={`w-10 h-10 rounded-full ${state.color} flex items-center justify-center`}
-                animate={state.animate ? {
-                  scale: [1, 1.2, 1],
-                } : {}}
-                transition={{
-                  duration: 1,
-                  repeat: state.animate ? Infinity : 0,
-                  ease: "easeInOut"
-                }}
-              >
-                {state.icon === Loader ? (
-                  <Loader className="w-5 h-5 text-white animate-spin" />
-                ) : (
-                  <state.icon className="w-5 h-5 text-white" />
-                )}
-              </motion.div>
-
-              {/* Pulse Effect */}
-              {state.animate && (
-                <motion.div
-                  className={`absolute inset-0 rounded-full ${state.color} opacity-40`}
-                  animate={{
-                    scale: [1, 1.8],
-                    opacity: [0.4, 0]
-                  }}
-                  transition={{
-                    duration: 1.5,
-                    repeat: Infinity,
-                    ease: "easeOut"
-                  }}
-                />
-              )}
-            </div>
-
-            {/* Status Text */}
-            <div className="flex flex-col">
-              <span className="text-white font-medium text-sm">
-                {state.text}
-              </span>
-              {isConnected !== undefined && (
-                <span className="text-white/60 text-xs">
-                  {isConnected ? 'Connesso' : 'Connessione...'}
-                </span>
-              )}
-            </div>
-
-            {/* Sound Wave Animation */}
-            {(isListening || isSpeaking) && (
-              <div className="flex items-center space-x-1">
-                {[...Array(3)].map((_, i) => (
+            <div className="flex items-center justify-between p-4 h-full">
+              {/* ✅ SEZIONE SINISTRA - ICONA E STATO */}
+              <div className="flex items-center space-x-4 flex-1">
+                {/* Icona Animata con Background Fisso */}
+                <div className="relative flex-shrink-0">
                   <motion.div
-                    key={i}
-                    className={`w-0.5 ${isListening ? 'bg-blue-400' : 'bg-purple-400'} rounded-full`}
-                    animate={{
-                      height: [8, 16, 8],
-                    }}
+                    className={`w-12 h-12 rounded-full ${state.color} flex items-center justify-center`}
+                    animate={state.animate ? {
+                      scale: [1, 1.1, 1],
+                    } : {}}
                     transition={{
-                      duration: 0.8,
-                      repeat: Infinity,
-                      delay: i * 0.15,
+                      duration: 1.2,
+                      repeat: state.animate ? Infinity : 0,
                       ease: "easeInOut"
                     }}
-                  />
-                ))}
-              </div>
-            )}
+                  >
+                    {state.icon === Loader ? (
+                      <Loader className="w-6 h-6 text-white animate-spin" />
+                    ) : (
+                      <state.icon className="w-6 h-6 text-white" />
+                    )}
+                  </motion.div>
 
-            {/* Close Button */}
-            <motion.button
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log('Close button clicked');
-                if (onClose) onClose();
-                setIsVisible(false);
-              }}
-              className="ml-2 p-1.5 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.95 }}
-            >
-              <X className="w-4 h-4 text-white/80" />
-            </motion.button>
+                  {/* Pulse Effect - Solo quando animato */}
+                  {state.animate && (
+                    <motion.div
+                      className={`absolute inset-0 rounded-full ${state.color} opacity-40`}
+                      animate={{
+                        scale: [1, 1.6],
+                        opacity: [0.4, 0]
+                      }}
+                      transition={{
+                        duration: 1.8,
+                        repeat: Infinity,
+                        ease: "easeOut"
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* Testo di Stato */}
+                <div className="flex flex-col min-w-0 flex-1">
+                  <span className={`font-medium text-sm ${state.textColor} truncate`}>
+                    {state.text}
+                  </span>
+                  
+                  {/* ✅ INDICATORE CONNESSIONE SEMPRE VISIBILE */}
+                  <div className="flex items-center space-x-2 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${
+                      isConnected ? 'bg-green-400' : 'bg-red-400'
+                    }`} />
+                    <span className="text-white/60 text-xs">
+                      {isConnected ? 'Connesso' : 'Connessione...'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* ✅ SEZIONE DESTRA - VISUALIZZATORE E CHIUDI */}
+              <div className="flex items-center space-x-3 flex-shrink-0">
+                {/* Visualizzatore Onde Sonore */}
+                {(isListening || isSpeaking) && (
+                  <div className="flex items-center space-x-1">
+                    {[...Array(4)].map((_, i) => (
+                      <motion.div
+                        key={i}
+                        className={`w-1 rounded-full ${
+                          isListening ? 'bg-blue-400' : 'bg-purple-400'
+                        }`}
+                        animate={{
+                          height: [6, 18, 6],
+                        }}
+                        transition={{
+                          duration: 0.8,
+                          repeat: Infinity,
+                          delay: i * 0.15,
+                          ease: "easeInOut"
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {/* Pulsante Chiudi */}
+                <motion.button
+                  onClick={handleClose}
+                  className="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors flex-shrink-0"
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                  title="Chiudi assistente vocale"
+                >
+                  <X className="w-4 h-4 text-white/80" />
+                </motion.button>
+              </div>
+            </div>
           </motion.div>
 
-          {/* Connection Indicator Dot */}
-          <div className={`absolute -bottom-1 left-1/2 transform -translate-x-1/2 w-2 h-2 rounded-full ${
-            isConnected ? 'bg-green-400' : 'bg-red-400'
-          } animate-pulse`} />
+          {/* ✅ INDICATORI AGGIUNTIVI */}
+          {/* Indicatore Messaggio quando in elaborazione */}
+          {isProcessing && (
+            <motion.div
+              className="absolute -bottom-8 left-1/2 transform -translate-x-1/2"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className="bg-blue-500/90 text-white text-xs px-3 py-1 rounded-full backdrop-blur-sm">
+                Elaborazione in corso...
+              </div>
+            </motion.div>
+          )}
+
+          {/* Indicatore Funzione in esecuzione */}
+          {isExecutingFunction && currentFunction && (
+            <motion.div
+              className="absolute -bottom-8 left-1/2 transform -translate-x-1/2"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <div className="bg-green-500/90 text-white text-xs px-3 py-1 rounded-full backdrop-blur-sm">
+                {currentFunction === 'search_products' && '🔍 Ricerca in corso'}
+                {currentFunction === 'add_to_cart' && '🛒 Aggiunta al carrello'}
+                {currentFunction === 'navigate_to_page' && '📍 Navigazione'}
+                {!['search_products', 'add_to_cart', 'navigate_to_page'].includes(currentFunction) && '⚡ Esecuzione'}
+              </div>
+            </motion.div>
+          )}
         </div>
       </motion.div>
     </AnimatePresence>

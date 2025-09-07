@@ -9,6 +9,7 @@
 *.p12
 *.jks
 *.keystore
+.cursorignore
 
 # ---- Python virtual envs (sia venv che .venv) ----
 venv/

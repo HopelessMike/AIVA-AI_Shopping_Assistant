@@ -1,0 +1,7 @@
+.gitattributes
+.gitignore
+.vscode/*
+aiva-backend/__pycache__/*
+aiva-backend/static/*
+aiva-backend/venv/*
+aiva-frontend/package-lock.json
