@@ -1,30 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ShoppingCart, Heart, Star, Clock, Tag } from 'lucide-react';
+import { ShoppingCart, Heart, Star, Tag } from 'lucide-react';
 import { productAPI, cartAPI } from '../services/api';
 
 const OfferCard = ({ offer, onAddToCart }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(offer.timeLeft);
-  
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 0) return 0;
-        return prev - 1;
-      });
-    }, 1000);
-    
-    return () => clearInterval(timer);
-  }, []);
 
-  const formatTime = (seconds) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-  
   return (
     <motion.div
       className="bg-white rounded-xl shadow-sm overflow-hidden cursor-pointer relative"
@@ -45,18 +26,6 @@ const OfferCard = ({ offer, onAddToCart }) => {
         </motion.div>
       </div>
 
-      {/* Timer */}
-      <div className="absolute top-4 right-4 z-10">
-        <motion.div
-          className="bg-orange-500 text-white px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1"
-          animate={{ scale: timeLeft < 3600 ? [1, 1.1, 1] : 1 }}
-          transition={{ duration: 1, repeat: timeLeft < 3600 ? Infinity : 0 }}
-        >
-          <Clock size={14} />
-          {formatTime(timeLeft)}
-        </motion.div>
-      </div>
-
       <div className="relative overflow-hidden h-72 bg-gray-100">
         <motion.img
           src={offer.image}
@@ -65,15 +34,6 @@ const OfferCard = ({ offer, onAddToCart }) => {
           animate={{ scale: isHovered ? 1.1 : 1 }}
           transition={{ duration: 0.3 }}
         />
-        
-        {/* Overlay for urgency */}
-        {timeLeft < 3600 && (
-          <motion.div
-            className="absolute inset-0 bg-red-500/20"
-            animate={{ opacity: [0.2, 0.4, 0.2] }}
-            transition={{ duration: 2, repeat: Infinity }}
-          />
-        )}
         
         <motion.div
           className="absolute top-4 right-16"
@@ -129,14 +89,6 @@ const OffersPage = () => {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedFilter, setSelectedFilter] = useState('all');
-
-  const filters = [
-    { id: 'all', name: 'Tutte le offerte' },
-    { id: 'flash', name: 'Flash Sale' },
-    { id: 'daily', name: 'Offerta del giorno' },
-    { id: 'weekly', name: 'Offerta della settimana' }
-  ];
 
   useEffect(() => {
     const loadOffers = async () => {
@@ -159,8 +111,6 @@ const OffersPage = () => {
           rating: product.rating,
           reviews: product.reviews,
           category: product.category,
-          timeLeft: 3600 + (index * 1800), // Different countdown times
-          type: index % 3 === 0 ? 'flash' : index % 3 === 1 ? 'daily' : 'weekly',
           variants: product.variants
         }));
         
@@ -176,9 +126,38 @@ const OffersPage = () => {
     loadOffers();
   }, []);
 
-  const filteredOffers = selectedFilter === 'all' 
-    ? offers 
-    : offers.filter(offer => offer.type === selectedFilter);
+  // Espone i prodotti visibili per il backend (nome -> id) e lista visibile
+  useEffect(() => {
+    try {
+      const map = {};
+      (offers || []).forEach(p => {
+        const key = (p.name || '').toLowerCase().normalize('NFKD').replace(/[^\w\s]/g,'').trim();
+        if (key) map[key] = p.id;
+      });
+      window.visibleProductsMap = map;
+      window.visibleProductIds = (offers || []).map(p => p.id);
+      window.currentPageContext = 'offers';
+    } catch {}
+    return () => {
+      if (window.currentPageContext === 'offers') {
+        try {
+          delete window.visibleProductsMap;
+          delete window.visibleProductIds;
+          delete window.currentPageContext;
+        } catch {}
+      }
+    };
+  }, [offers]);
+
+  // Listener eventuale per applicazione filtri lato offerte (no-op per ora)
+  useEffect(() => {
+    const handler = (e) => {
+      // Placeholder per eventuale gestione futura; manteniamo per compatibilità
+      // const { filters, query } = e.detail || {};
+    };
+    window.addEventListener('offers-apply-filters', handler);
+    return () => window.removeEventListener('offers-apply-filters', handler);
+  }, []);
 
   const handleAddToCart = async (offer) => {
     try {
@@ -218,53 +197,13 @@ const OffersPage = () => {
           animate={{ opacity: 1, y: 0 }}
         >
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Offerte Speciali</h1>
-          <p className="text-gray-600">Non perdere le nostre offerte limitate nel tempo</p>
+          <p className="text-gray-600">Scopri una selezione di prodotti in sconto</p>
         </motion.div>
-
-        {/* Filters */}
-        <motion.div
-          className="bg-white rounded-lg shadow-sm p-6 mb-8"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-        >
-          <div className="flex flex-wrap gap-2">
-            {filters.map((filter) => (
-              <button
-                key={filter.id}
-                onClick={() => setSelectedFilter(filter.id)}
-                className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                  selectedFilter === filter.id
-                    ? 'bg-red-600 text-white'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                {filter.name}
-              </button>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Urgent Offers Banner */}
-        {offers.some(offer => offer.timeLeft < 3600) && (
-          <motion.div
-            className="bg-gradient-to-r from-red-500 to-orange-500 text-white p-4 rounded-lg mb-8"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.2 }}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <Clock size={20} />
-              <span className="font-semibold">ATTENZIONE! Offerte in scadenza tra poco!</span>
-            </div>
-          </motion.div>
-        )}
 
         {/* Results Count */}
         <div className="mb-6">
           <p className="text-gray-600">
-            {filteredOffers.length} offerte disponibili
-            {selectedFilter !== 'all' && ` in ${filters.find(f => f.id === selectedFilter)?.name}`}
+            {offers.length} offerte disponibili
           </p>
         </div>
 
@@ -275,7 +214,7 @@ const OffersPage = () => {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
         >
-          {filteredOffers.map((offer, index) => (
+          {offers.map((offer, index) => (
             <motion.div
               key={offer.id}
               initial={{ opacity: 0, y: 20 }}
@@ -288,7 +227,7 @@ const OffersPage = () => {
         </motion.div>
 
         {/* No Results */}
-        {filteredOffers.length === 0 && (
+        {offers.length === 0 && (
           <motion.div
             className="text-center py-12"
             initial={{ opacity: 0 }}
@@ -301,12 +240,6 @@ const OffersPage = () => {
             <p className="text-gray-600 mb-4">
               Controlla di nuovo più tardi per nuove offerte
             </p>
-            <button
-              onClick={() => setSelectedFilter('all')}
-              className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-            >
-              Vedi tutte le offerte
-            </button>
           </motion.div>
         )}
 

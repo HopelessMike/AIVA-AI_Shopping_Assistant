@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShoppingCart, Plus, Minus, Trash2, CreditCard, Truck, ArrowRight } from 'lucide-react';
+import { useCart } from '../hooks/useCart';
 
 const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
   const [isRemoving, setIsRemoving] = useState(false);
@@ -25,15 +26,15 @@ const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
       <div className="flex items-center gap-4">
         <div className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden">
           <img
-            src={item.image}
-            alt={item.name}
+            src={item.product?.images?.[0] || item.product?.image}
+            alt={item.product?.name}
             className="w-full h-full object-cover"
           />
         </div>
         
         <div className="flex-1">
-          <h3 className="font-semibold text-gray-900 mb-1">{item.name}</h3>
-          <p className="text-sm text-gray-500 mb-2">{item.brand}</p>
+          <h3 className="font-semibold text-gray-900 mb-1">{item.product?.name}</h3>
+          <p className="text-sm text-gray-500 mb-2">{item.product?.brand}</p>
           <div className="flex items-center gap-4 text-sm text-gray-600">
             <span>Taglia: {item.size}</span>
             <span>Colore: {item.color}</span>
@@ -60,13 +61,8 @@ const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
         
         <div className="text-right">
           <div className="font-semibold text-gray-900">
-            €{(item.price * item.quantity).toFixed(2)}
+            €{((item.product?.price || 0) * item.quantity).toFixed(2)}
           </div>
-          {item.originalPrice && (
-            <div className="text-sm text-gray-400 line-through">
-              €{(item.originalPrice * item.quantity).toFixed(2)}
-            </div>
-          )}
         </div>
         
         <button
@@ -81,54 +77,12 @@ const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
 };
 
 const CartPage = () => {
-  const [cartItems, setCartItems] = useState([
-    {
-      id: 1,
-      name: "T-Shirt Basic Cotone Bio",
-      brand: "EcoWear",
-      price: 19.90,
-      originalPrice: 29.90,
-      image: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400",
-      size: "M",
-      color: "Bianco",
-      quantity: 2
-    },
-    {
-      id: 2,
-      name: "Felpa con Cappuccio",
-      brand: "Street Urban",
-      price: 59.90,
-      originalPrice: 79.90,
-      image: "https://images.unsplash.com/photo-1556821840-3a63f95609a7?w=400",
-      size: "L",
-      color: "Nero",
-      quantity: 1
-    }
-  ]);
+  const { cart, cartTotal, cartCount, shipping, updateQuantity, removeFromCart, clearCart } = useCart();
 
-  const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const shipping = subtotal >= 100 ? 0 : 9.90;
-  const total = subtotal + shipping;
+  const subtotal = cartTotal;
+  const total = cartTotal + shipping;
 
-  const updateQuantity = (itemId, newQuantity) => {
-    if (newQuantity <= 0) return;
-    
-    setCartItems(items =>
-      items.map(item =>
-        item.id === itemId ? { ...item, quantity: newQuantity } : item
-      )
-    );
-  };
-
-  const removeItem = (itemId) => {
-    setCartItems(items => items.filter(item => item.id !== itemId));
-  };
-
-  const clearCart = () => {
-    setCartItems([]);
-  };
-
-  if (cartItems.length === 0) {
+  if (cart.length === 0) {
     return (
       <div className="min-h-screen bg-gray-50">
         <div className="max-w-4xl mx-auto px-4 py-8">
@@ -168,7 +122,7 @@ const CartPage = () => {
         >
           <h1 className="text-4xl font-bold text-gray-900 mb-4">Carrello</h1>
           <p className="text-gray-600">
-            {cartItems.length} {cartItems.length === 1 ? 'articolo' : 'articoli'} nel carrello
+            {cartCount} {cartCount === 1 ? 'articolo' : 'articoli'} nel carrello
           </p>
         </motion.div>
 
@@ -193,12 +147,12 @@ const CartPage = () => {
               
               <AnimatePresence>
                 <div className="space-y-4">
-                  {cartItems.map((item) => (
+                  {cart.map((item) => (
                     <CartItem
                       key={item.id}
                       item={item}
                       onUpdateQuantity={updateQuantity}
-                      onRemove={removeItem}
+                      onRemove={removeFromCart}
                     />
                   ))}
                 </div>

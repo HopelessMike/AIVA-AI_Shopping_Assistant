@@ -15,6 +15,7 @@ import {
   Check
 } from 'lucide-react';
 import { productAPI } from '../services/api';
+import { resolveAssetUrl } from '../lib/basePath';
 import { useCart } from '../hooks/useCart';
 import { useFavorites } from '../hooks/useFavorites';
 
@@ -40,7 +41,28 @@ const ProductPage = () => {
         setError(null);
         const productData = await productAPI.getProduct(id);
         setProduct(productData);
-        
+        const stripMd = (s) =>
+          (s || '')
+            .replace(/```[\s\S]*?```/g, ' ')
+            .replace(/`[^`]*`/g, ' ')
+            .replace(/[\*_~>#-]+/g, ' ')
+            .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+            .replace(/\s{2,}/g, ' ')
+            .trim();
+
+        window.currentProductContext = {
+          id: productData.id,
+          name: productData.name,
+          description_text: stripMd(productData.description || productData.description_long || ''),
+          category: productData.category,
+          gender: productData.gender,
+          variants: (productData.variants || []).map((v) => ({
+            size: v.size,
+            color: v.color,
+            available: v.available,
+            stock: v.stock,
+          })),
+        };
         // Set default selections
         if (productData.variants && productData.variants.length > 0) {
           setSelectedSize(productData.variants[0].size);
@@ -57,20 +79,20 @@ const ProductPage = () => {
     if (id) {
       loadProduct();
     }
+    return () => {
+      if (window.currentProductContext?.id === id) {
+        delete window.currentProductContext;
+      }
+    };
   }, [id]);
 
   const handleAddToCart = async () => {
-    if (!selectedSize || !selectedColor) {
-      alert('Seleziona taglia e colore');
-      return;
-    }
+    if (!selectedSize || !selectedColor) return;
 
     try {
       await addToCart(product, selectedSize, selectedColor, quantity);
-      alert('Prodotto aggiunto al carrello!');
     } catch (error) {
       console.error('Error adding to cart:', error);
-      alert('Errore nell\'aggiunta al carrello');
     }
   };
 
@@ -132,7 +154,7 @@ const ProductPage = () => {
               transition={{ duration: 0.5 }}
             >
               <img
-                src={product.images?.[selectedImage] || product.image || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=600"}
+                src={resolveAssetUrl(product.images?.[selectedImage] || product.image || "/static/images/placeholder-lg.jpg")}
                 alt={product.name}
                 className="w-full h-full object-cover"
               />
@@ -152,7 +174,7 @@ const ProductPage = () => {
                     whileTap={{ scale: 0.95 }}
                   >
                     <img
-                      src={image}
+                      src={resolveAssetUrl(image)}
                       alt={`${product.name} ${index + 1}`}
                       className="w-full h-full object-cover"
                     />

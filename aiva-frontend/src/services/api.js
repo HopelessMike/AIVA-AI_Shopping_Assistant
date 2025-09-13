@@ -58,6 +58,12 @@ export const productAPI = {
     }
   },
 
+  // Get size from product details
+  getSizeGuide: async (category) => {
+    const response = await api.get(`/api/size-guide/${encodeURIComponent(category)}`);
+    return response.data;
+  },
+
   // Get single product by ID
   getProduct: async (productId) => {
     try {

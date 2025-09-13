@@ -4,6 +4,7 @@
 
 from fastapi import FastAPI, HTTPException, Request, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, validator
@@ -50,6 +51,34 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+# Static files (for serving images in production/dev)
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Public base URL for absolute asset links (so FE on another origin can load images)
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or os.getenv("BACKEND_PUBLIC_URL") or f"http://localhost:{os.getenv('PORT', '8000')}"
+
+# Dynamic assets base URL (e.g. CDN or static mount). Default to absolute backend URL
+ASSETS_BASE_URL = os.getenv("ASSETS_BASE_URL") or f"{PUBLIC_BASE_URL.rstrip('/')}/static/images"
+
+def build_image_url(path: str) -> str:
+    """Build a robust image URL from a stored path or filename.
+
+    Rules:
+    - If path is full http(s), return as-is
+    - Else, join with ASSETS_BASE_URL
+    - Avoid duplicating 'images/' if ASSETS_BASE_URL already points to images dir
+    """
+    if not path:
+        return path
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    base = (os.getenv("ASSETS_BASE_URL", ASSETS_BASE_URL) or "/static/images").rstrip("/")
+    rel = path.lstrip("/")
+    if rel.startswith("images/"):
+        rel = rel.split("images/", 1)[1]
+    return f"{base}/{rel}"
 
 # ============================================================================
 # ENUMS AND CONSTANTS
@@ -1163,7 +1192,48 @@ class DataStore:
                 "tags": ["tuta", "sport", "fitness", "yoga", "completo", "athleisure"]
             }
         ]
-        
+
+        # Resolve image URLs dynamically based on ASSETS_BASE_URL
+        for p in products_data:
+            if "images" in p and isinstance(p["images"], list):
+                p["images"] = [build_image_url(img) for img in p["images"]]
+
+        # Limit on-sale products to a small curated subset (max 10)
+        sale_ids: Set[str] = {
+            "550e8400-0001-41d4-a716-446655440001",  # T-Shirt Basic Cotone Bio
+            "550e8400-0002-41d4-a716-446655440002",  # Polo Elegante Piquet
+            "550e8400-0003-41d4-a716-446655440003",  # Camicia Oxford Classica
+            "550e8400-0007-41d4-a716-446655440007",  # Felpa con Cappuccio Oversize
+            "550e8400-0009-41d4-a716-446655440009",  # Bomber in Pelle
+            "550e8400-0012-41d4-a716-446655440012",  # Jeans Slim Fit Stretch
+            "550e8400-0021-41d4-a716-446655440021",  # Sneakers Vintage Pelle
+            "550e8400-0024-41d4-a716-446655440024"   # Cintura in Pelle Reversibile
+        }
+
+        for p in products_data:
+            pid = p.get("id")
+            if pid in sale_ids:
+                # Ensure sale flags and discount look consistent
+                p["on_sale"] = True
+                try:
+                    op = float(p.get("original_price", p.get("price", 0)))
+                    pr = float(p.get("price", op))
+                    if op > pr:
+                        perc = int(round((op - pr) / op * 100))
+                        p["discount_percentage"] = max(1, perc)
+                    else:
+                        # If prices are equal, apply a modest 10% discount
+                        p["discount_percentage"] = p.get("discount_percentage", 10)
+                        p["price"] = round(op * (1 - p["discount_percentage"]/100), 2)
+                except Exception:
+                    p["discount_percentage"] = p.get("discount_percentage", 10)
+            else:
+                # Not on sale: reset sale fields and use original price as current price
+                p["on_sale"] = False
+                p["discount_percentage"] = 0
+                if "original_price" in p:
+                    p["price"] = p["original_price"]
+
         return [Product(**p) for p in products_data]
     
     def search_products(self, 
@@ -1442,39 +1512,77 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     
     try:
         while True:
-            # Receive message from client
             data = await websocket.receive_json()
-            
+
             if data.get("type") == "voice_command":
-                # Process voice command
                 text = data.get("text", "")
+                client_ctx = data.get("context", {}) or {}
+
+                # 🔄 Aggiorna lo stato server-side con info dal client
+                if "current_page" in client_ctx:
+                    data_store.current_page = client_ctx["current_page"]
+
+                # Prodotto corrente (dettagli completi per l'AI)
+                current_product_details = None
+                cp = client_ctx.get("current_product")
+                if cp and isinstance(cp, dict) and cp.get("id"):
+                    prod = data_store.get_product_by_id(cp["id"])
+                    if prod:
+                        current_product_details = {
+                            "id": prod.id,
+                            "name": prod.name,
+                            "category": prod.category,
+                            "gender": prod.gender,
+                            "variants": [
+                                {
+                                  "size": v.size,
+                                  "color": v.color,
+                                  "available": v.available,
+                                  "stock": v.stock
+                                } for v in prod.variants
+                            ]
+                        }
+
+                # Prodotti visibili (mappa id->name per open product by name)
+                visible_products_details = []
+                for pid in (client_ctx.get("visible_products") or [])[:24]:
+                    p = data_store.get_product_by_id(pid)
+                    if p:
+                        visible_products_details.append({
+                            "id": p.id, "name": p.name,
+                            "category": p.category, "gender": p.gender
+                        })
+
+                # Mappa normalizzata nome->id inviata dal client
+                visible_products_map = client_ctx.get("visible_products_map") or {}
+
                 context = {
                     "session_id": session_id,
                     "preferences": manager.user_sessions[session_id]["preferences"],
                     "current_page": data_store.current_page,
-                    "cart_count": data_store.cart.item_count
+                    "cart_count": data_store.cart.item_count,
+                    "current_product": current_product_details,
+                    "visible_products": visible_products_details,
+                    "visible_products_map": visible_products_map,
+                    "ui_filters": client_ctx.get("ui_filters", {})
                 }
-                
-                # Start streaming response immediately
+
                 await manager.send_json(websocket, {
                     "type": "processing_start",
                     "message": "Sto elaborando la tua richiesta..."
                 })
-                
-                # Process with real AI service
+
                 try:
                     from ai_service import process_voice_command_streaming
-                    
-                    # Stream AI response
                     async for chunk in process_voice_command_streaming(text, context):
                         await manager.send_json(websocket, chunk)
-                        
                 except Exception as e:
                     logger.error(f"AI processing error: {e}")
                     await manager.send_json(websocket, {
                         "type": "error",
                         "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi."
                     })
+
                 
             elif data.get("type") == "update_preferences":
                 # Update user preferences

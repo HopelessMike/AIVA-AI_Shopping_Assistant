@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ShoppingCart, Heart, Star, Filter, Grid, List, ChevronDown } from 'lucide-react';
+import { ShoppingCart, Heart, Star, Filter, Grid, List, ChevronDown, X, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { productAPI, cartAPI } from '../services/api';
+import { productAPI } from '../services/api';
+import { resolveAssetUrl } from '../lib/basePath';
+import { useCart } from '../hooks/useCart';
 import { useFavorites } from '../hooks/useFavorites';
 
 const ProductCard = ({ product, onAddToCart, onToggleFavorite, isFavorite }) => {
@@ -24,7 +26,7 @@ const ProductCard = ({ product, onAddToCart, onToggleFavorite, isFavorite }) => 
     >
       <div className="relative overflow-hidden h-72 bg-gray-100">
         <motion.img
-          src={product.images?.[0] || product.image || "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?w=400"}
+          src={resolveAssetUrl(product.images?.[0] || product.image || "/static/images/placeholder.jpg")}
           alt={product.name}
           className="w-full h-full object-cover"
           animate={{ scale: isHovered ? 1.1 : 1 }}
@@ -108,9 +110,17 @@ const ProductsPage = () => {
   const [selectedCategory, setSelectedCategory] = useState('');
   const [sortBy, setSortBy] = useState('name');
   const [viewMode, setViewMode] = useState('grid');
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
+  const [quickAddProduct, setQuickAddProduct] = useState(null);
+  const [selectedSize, setSelectedSize] = useState('');
+  const [selectedColor, setSelectedColor] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
 
   // Hooks
   const { toggleFavorite, isFavorite } = useFavorites();
+  const { addToCart: addToCartHook } = useCart();
+
+  // (rimosso: gestito nell'effetto di esposizione contesto visibile)
 
   const categories = [
     { id: '', name: 'Tutte le categorie' },
@@ -179,23 +189,95 @@ const ProductsPage = () => {
     setFilteredProducts(filtered);
   }, [products, sortBy]);
 
-  const handleAddToCart = async (product) => {
+  // 🔊 Espone i prodotti visibili (id + mappa normalizzata nome→id) e un entrypoint filtri stabile
+  useEffect(() => {
+    // Normalizza il nome per match robusti (lowercase + rimozione accenti/punteggiatura)
+    const normalize = (s) =>
+      (s || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .replace(/[^a-z0-9\s]/g, '')
+        .trim();
+
+    const ids = (filteredProducts || []).map((p) => p.id);
+    const map = Object.fromEntries(
+      (filteredProducts || []).map((p) => [normalize(p.name), p.id])
+    );
+
+    // Contesto per l’assistente
+    window.visibleProductIds = ids;
+    window.visibleProductsMap = map;
+    window.productsSearchQuery = searchQuery || '';
+    window.productsSelectedCategory = selectedCategory || '';
+
+    // Entrypoint robusto per applicare filtri via voce
+    window.applyProductFilters = ({ query, q, category, sort, price_range } = {}) => {
+      const qq = query ?? q;
+      if (typeof qq === 'string') setSearchQuery(qq);
+      if (typeof category === 'string') setSelectedCategory(category);
+      if (typeof sort === 'string') setSortBy(sort);
+      if (price_range === 'low-to-high') setSortBy('price-low');
+      if (price_range === 'high-to-low') setSortBy('price-high');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    return () => {
+      delete window.visibleProductIds;
+      delete window.visibleProductsMap;
+      delete window.applyProductFilters;
+      delete window.productsSearchQuery;
+      delete window.productsSelectedCategory;
+    };
+  }, [filteredProducts, searchQuery, selectedCategory, setSearchQuery, setSelectedCategory, setSortBy]);
+
+  const getAvailableSizes = (product) => {
+    const sizes = new Set();
+    (product?.variants || []).forEach(v => { if (v.available) sizes.add(v.size); });
+    return Array.from(sizes);
+  };
+
+  const getAvailableColors = (product) => {
+    const colors = new Set();
+    (product?.variants || []).forEach(v => { if (v.available) colors.add(v.color); });
+    return Array.from(colors);
+  };
+
+  const ensureValidCombination = (product, size, color) => {
+    const variants = product?.variants || [];
+    return variants.some(v => v.size === size && v.color === color && v.available);
+  };
+
+  const openQuickAdd = (product) => {
+    setQuickAddProduct(product);
+    const sizes = getAvailableSizes(product);
+    const colors = getAvailableColors(product);
+    const defaultSize = sizes[0] || '';
+    const defaultColor = colors[0] || '';
+    setSelectedSize(defaultSize);
+    setSelectedColor(defaultColor);
+    setIsQuickAddOpen(true);
+  };
+
+  const handleAddToCart = (product) => {
+    // Open variant selection modal instead of adding a default variant
+    openQuickAdd(product);
+  };
+
+  const confirmAddToCart = async () => {
+    if (!quickAddProduct) return;
+    if (!selectedSize || !selectedColor) return;
+    if (!ensureValidCombination(quickAddProduct, selectedSize, selectedColor)) return;
     try {
-      // For now, add with default size and color
-      // In a real app, you'd show a size/color selector
-      const defaultVariant = product.variants?.[0];
-      if (defaultVariant) {
-        await cartAPI.addToCart(
-          product.id,
-          defaultVariant.size,
-          defaultVariant.color,
-          1
-        );
-        // Show success message
-        console.log('Product added to cart:', product.name);
-      }
+      setIsAdding(true);
+      await addToCartHook(quickAddProduct, selectedSize, selectedColor, 1);
+      setIsQuickAddOpen(false);
+      setQuickAddProduct(null);
+      console.log('Product added to cart:', quickAddProduct?.name);
     } catch (error) {
       console.error('Error adding to cart:', error);
+    } finally {
+      setIsAdding(false);
     }
   };
 
@@ -354,6 +436,91 @@ const ProductsPage = () => {
           </motion.div>
         )}
       </div>
+      {/* Quick Add Modal */}
+      {isQuickAddOpen && quickAddProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setIsQuickAddOpen(false)} />
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">{quickAddProduct.name}</h3>
+                <p className="text-sm text-gray-500">{quickAddProduct.brand}</p>
+              </div>
+              <button
+                onClick={() => setIsQuickAddOpen(false)}
+                className="p-2 rounded-full hover:bg-gray-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {/* Size */}
+              <div>
+                <h4 className="text-sm font-medium text-gray-900 mb-2">Seleziona taglia</h4>
+                <div className="flex flex-wrap gap-2">
+                  {getAvailableSizes(quickAddProduct).map((size) => (
+                    <button
+                      key={size}
+                      onClick={() => setSelectedSize(size)}
+                      className={`px-3 py-2 rounded-lg border text-sm font-medium ${
+                        selectedSize === size
+                          ? 'border-blue-600 text-blue-600 bg-blue-50'
+                          : 'border-gray-300 text-gray-700 hover:border-gray-400'
+                      }`}
+                    >
+                      {size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Color */}
+              <div>
+                <h4 className="text-sm font-medium text-gray-900 mb-2">Seleziona colore</h4>
+                <div className="flex flex-wrap gap-2">
+                  {getAvailableColors(quickAddProduct).map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setSelectedColor(color)}
+                      className={`px-3 py-2 rounded-lg border text-sm font-medium capitalize ${
+                        selectedColor === color
+                          ? 'border-blue-600 text-blue-600 bg-blue-50'
+                          : 'border-gray-300 text-gray-700 hover:border-gray-400'
+                      }`}
+                    >
+                      {color}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={confirmAddToCart}
+                  disabled={isAdding || !selectedSize || !selectedColor || !ensureValidCombination(quickAddProduct, selectedSize, selectedColor)}
+                  className="flex-1 inline-flex items-center justify-center gap-2 bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-60"
+                >
+                  <ShoppingCart size={18} />
+                  {isAdding ? 'Aggiungo...' : 'Aggiungi al carrello'}
+                </button>
+                <button
+                  onClick={() => setIsQuickAddOpen(false)}
+                  className="px-4 py-3 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                >
+                  Annulla
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };

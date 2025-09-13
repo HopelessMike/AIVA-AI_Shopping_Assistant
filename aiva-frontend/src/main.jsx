@@ -8,10 +8,13 @@ import './index.css'
 // Import polyfills first
 import './polyfills.js'
 
+// usa StrictMode solo in dev
+const Root = import.meta.env.DEV ? React.StrictMode : React.Fragment
+
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
+  <Root>
     <BrowserRouter>
       <App />
     </BrowserRouter>
-  </React.StrictMode>,
+  </Root>,
 )

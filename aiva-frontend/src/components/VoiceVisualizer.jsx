@@ -83,7 +83,7 @@ const VoiceVisualizer = ({
     if (isProcessing) {
       return {
         icon: Loader,
-        text: 'Sto pensando...',
+        text: '',
         color: 'bg-blue-500',
         textColor: 'text-white',
         animate: true
@@ -133,7 +133,7 @@ const VoiceVisualizer = ({
         initial={{ opacity: 0, y: -20, scale: 0.9 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -20, scale: 0.9 }}
-        className="fixed top-6 left-0 right-0 z-50"
+        className="fixed top-6 left-0 right-0 z-[100]"
         style={{ pointerEvents: 'none' }}
       >
         <div className="relative mx-auto" style={{ width: '400px', maxWidth: '90vw', pointerEvents: 'auto' }}>
@@ -245,19 +245,11 @@ const VoiceVisualizer = ({
             </div>
           </motion.div>
 
-          {/* ✅ INDICATORI AGGIUNTIVI */}
-          {/* Indicatore Messaggio quando in elaborazione */}
-          {isProcessing && (
-            <motion.div
-              className="absolute -bottom-8 left-1/2 transform -translate-x-1/2"
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-            >
-              <div className="bg-blue-500/90 text-white text-xs px-3 py-1 rounded-full backdrop-blur-sm">
-                Elaborazione in corso...
-              </div>
-            </motion.div>
+          {/* Testo di stato — rimosso per non mostrare "elaborazione in corso" */}
+          {false && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              {/* lasciato intenzionalmente vuoto */}
+            </p>
           )}
 
           {/* Indicatore Funzione in esecuzione */}
