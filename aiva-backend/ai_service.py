@@ -574,14 +574,9 @@ class SecureAIService:
                     if delta.function_call.arguments:
                         function_args += delta.function_call.arguments
                 
-                # Handle regular content
+                # Handle regular content (NO streaming verso il client)
                 elif delta.content:
                     response_text += delta.content
-                    yield {
-                        "type": "text_chunk",
-                        "content": delta.content
-                    }
-                    emitted_text = True
             
             # Process complete function call
             if function_name:
@@ -616,12 +611,9 @@ class SecureAIService:
                     elif function_name == "get_size_guide":
                         from app import data_store
                         guide = data_store.get_size_guide(args.get("category",""))
-                        # Confeziona un testo sintetico
-                        yield {"type": "stream_start"}
-                        yield {"type": "text_chunk", "content": f"Guida taglie per {args.get('category','')}:"}
-                        for gender, table in guide.items():
-                            yield {"type": "text_chunk", "content": f" {gender}: " + ", ".join([f"{k}={v}" for k,v in table.items()]) + "."}
-                        yield {"type": "stream_complete"}
+                        # Confeziona un testo sintetico in risposta unica
+                        text = " ".join([f"{gender}: " + ", ".join([f"{k}={v}" for k,v in table.items()]) + "." for gender, table in guide.items()])
+                        yield {"type": "response", "message": f"Guida taglie per {args.get('category','')}: {text}"}
                         yield {"type": "complete", "message": None}
                         return
                         
@@ -645,15 +637,14 @@ class SecureAIService:
                         "message": "Ho avuto un problema. Puoi ripetere?"
                     }
             
-            # Chiudi lo stream se presenti chunk e non ci sono function
-            if emitted_text and not function_name:
-                yield {"type": "stream_complete"}
-
-            # Complete response
+            # Invia una sola risposta testuale se non c'è function
+            if not function_name and response_text.strip():
+                yield {"type": "response", "message": response_text.strip()}
+            
+            # Complete garantito sempre
             yield {
                 "type": "complete",
-                # 🔇 Se c'è una function, non mandare testo per evitare doppio parlato
-                "message": (None if function_name else response_text),
+                "message": None,
                 "function": function_name,
                 "parameters": json.loads(function_args) if function_args and function_name else None
             }
@@ -664,6 +655,7 @@ class SecureAIService:
                 "type": "error",
                 "message": "Mi dispiace, ho avuto un problema. Riprova."
             }
+            yield {"type": "complete", "message": None}
     
     def get_quick_response(self, function_name: str, text: str) -> str:
         """Get immediate response while processing"""

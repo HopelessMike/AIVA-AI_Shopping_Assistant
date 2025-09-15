@@ -44,10 +44,13 @@ export const useVoiceAssistantNative = () => {
   const streamReleasePendingRef = useRef(false);
   const utterQueueRef = useRef([]);
   const ttsSafetyTimerRef = useRef(null);
+  // ⛔ Scarta messaggi WS residui del turno precedente (attivo dopo barge-in)
+  const dropStaleResponsesRef = useRef(false);
   const hasSpokenThisTurnRef = useRef(false);
   const isAssistantActiveRef = useRef(false);
   const isConnectedRef = useRef(false);
   const lastInteractionRef = useRef(Date.now());
+  const lastUserTextRef = useRef('');
   const isRestartingRef = useRef(false); // ✅ NUOVO: Previene riavvii multipli
   const selectedVoiceRef = useRef(null); // ✅ NUOVO: Memorizza la voce selezionata
   // 🔊 Barge-in RMS
@@ -133,8 +136,16 @@ export const useVoiceAssistantNative = () => {
         above = rms > thresh ? above + 1 : 0;
         if (above >= need) {
           try { window.speechSynthesis.cancel(); } catch {}
-          if (restartListeningRef.current) restartListeningRef.current();
+          // 🔓 sblocca turno e scarta TUTTO il parlato/buffer pendente
+          utterQueueRef.current = [];
+          streamBufferRef.current = '';
+          dropStaleResponsesRef.current = true;
+          isStreamingTTSRef.current = false;
+          setIsSpeaking(false);  isSpeakingRef.current = false;
+          setIsProcessing(false); isProcessingRef.current = false;
+          turnLockRef.current = false;
           stopBargeInMonitor();
+          if (restartListeningRef.current) restartListeningRef.current();
           return;
         }
         bargeInRafRef.current = requestAnimationFrame(tick);
@@ -341,6 +352,9 @@ export const useVoiceAssistantNative = () => {
           const path = pageMap[parameters.page] || '/';
           console.log('📍 Navigating to:', path);
           navigate(path);
+          // reset di sicurezza prima dell'ack
+          streamBufferRef.current = '';
+          dropStaleResponsesRef.current = false;
           // conferma breve + rilascio turno in onEnd
           speak(
             path === '/cart' ? 'Ecco il carrello.' : (path === '/offers' ? 'Ecco le offerte.' : 'Ecco!'),
@@ -451,7 +465,16 @@ export const useVoiceAssistantNative = () => {
             const currentPath = window.location.pathname;
             if (currentPath.includes('/products/')) {
               const size = parameters.size || 'M';
-              const color = parameters.color || 'nero';
+              const canonColor = (raw='') => {
+                const map = { 'nero':'nero','black':'nero','bianco':'bianco','white':'bianco','blu navy':'blu navy','navy':'blu navy','blu scuro':'blu navy','blu':'blu','azzurro':'azzurro','rosso':'rosso','borgogna':'bordeaux','bordeaux':'bordeaux','verde oliva':'verde oliva','oliva':'verde oliva','verde':'verde','grigio melange':'grigio melange','melange':'grigio melange','antracite':'grigio antracite','grigio':'grigio','beige':'beige','panna':'panna','crema':'panna','cammello':'cammello','marrone':'marrone','rosa':'rosa','giallo':'giallo','viola':'viola' };
+                const s = (raw||'').toLowerCase();
+                const keys = Object.keys(map).sort((a,b)=>b.length-a.length);
+                for (const k of keys) if (s.includes(k)) return map[k];
+                const parts = s.split(/[\s/,-]+/).filter(Boolean);
+                for (const p of parts) if (map[p]) return map[p];
+                return s || 'nero';
+              };
+              const color = canonColor(parameters.color || 'nero');
               
               setTimeout(() => {
                 const sizeButtons = document.querySelectorAll('button');
@@ -556,6 +579,11 @@ export const useVoiceAssistantNative = () => {
         case 'clear_cart':
           console.log('🗑️ Clearing cart');
           await clearCartAction();
+          speak('Carrello svuotato.', () => {
+            setIsProcessing(false); isProcessingRef.current = false;
+            turnLockRef.current = false;
+            if (restartListeningRef.current) restartListeningRef.current();
+          }, false, { enqueue: false });
           break;
           
         case 'get_current_promotions':
@@ -737,7 +765,7 @@ export const useVoiceAssistantNative = () => {
     };
 
     recognition.onresult = (event) => {
-      if (!isSpeakingRef.current && isUserTurnRef.current && !isExecutingFunctionRef.current) {
+      if (!isSpeakingRef.current && isUserTurnRef.current) {
         let finalTranscript = '';
         let interimTranscript = '';
 
@@ -764,9 +792,7 @@ export const useVoiceAssistantNative = () => {
           setTranscript(finalTranscript);
           resetInactivityTimeout();
           // Prende il lock direttamente handleVoiceCommand
-          if (!isProcessingRef.current) {
-            handleVoiceCommand(finalTranscript);
-          }
+          handleVoiceCommand(finalTranscript);
           
           // Stop recognition after getting final result
           if (recognitionRef.current) {
@@ -1150,6 +1176,11 @@ export const useVoiceAssistantNative = () => {
     // ⛔ se non sono attivo, ignora il messaggio
     if (!isAssistantActiveRef.current) return;
     console.log('📨 WebSocket message:', data.type);
+    // ⛔ Se stiamo scartando risposte stale del turno precedente, accetta solo il nuovo avvio
+    if (dropStaleResponsesRef.current && data.type !== 'processing_start') {
+      console.log('⏭️ Dropped stale WS message:', data.type);
+      return;
+    }
     setMessages(prev => [...prev, data]);
     lastInteractionRef.current = Date.now();
     
@@ -1162,6 +1193,7 @@ export const useVoiceAssistantNative = () => {
         safeStopRecognition(); // mic OFF
         // prepara buffer per eventuale stream
         streamBufferRef.current = '';
+        dropStaleResponsesRef.current = false; // ✅ da qui ricominciamo ad accettare messaggi
         break;
       }
 
@@ -1225,11 +1257,19 @@ export const useVoiceAssistantNative = () => {
         setIsProcessing(false);
         isProcessingRef.current = false;
         if (data.function && data.parameters) {
+          // Evita navigate_to_page:prodotti subito dopo comandi cart
+          const lowerLast = (lastUserTextRef.current || '').toLowerCase();
+          const isCartContext = /(carrello|svuota|rimuovi|togli|elenca|prodotti nel carrello)/.test(lowerLast);
+          if (isCartContext && data.function === 'navigate_to_page' && data.parameters?.page === 'prodotti') {
+            break;
+          }
           functionQueueRef.current.push({ name: data.function, params: data.parameters });
         } else {
-          // Nessuna funzione valida: rilascia turno
-          turnLockRef.current = false;
-          releaseTurnIfIdle();
+          // Nessuna funzione valida: chiedi di ripetere e rilascia
+          speak('Ok. Puoi ripetere la richiesta con qualche dettaglio in più?', () => {
+            turnLockRef.current = false;
+            releaseTurnIfIdle();
+          }, false, { enqueue: false });
         }
         break;
       }
@@ -1317,9 +1357,22 @@ export const useVoiceAssistantNative = () => {
   // Handle voice command
   const handleVoiceCommand = useCallback((text) => {
     if (!text.trim()) return;
+    lastUserTextRef.current = text;
 
+    // 🎙️ Barge-in hard: se l'assistente sta parlando, ferma e libera i lock
+    if (isSpeakingRef.current || window.speechSynthesis.speaking) {
+      try { window.speechSynthesis.cancel(); } catch {}
+      if (typeof stopBargeInMonitor === 'function') stopBargeInMonitor();
+      utterQueueRef.current = [];
+      streamBufferRef.current = '';
+      dropStaleResponsesRef.current = true;   // ignora WS residui finché non ricomincia il processing
+      turnLockRef.current = false;
+      setIsProcessing(false); isProcessingRef.current = false;
+      setIsSpeaking(false);  isSpeakingRef.current = false;
+    }
     if (turnLockRef.current || isProcessingRef.current) {
       console.log('🔒 Ignoro comando: turno in corso');
+      if (restartListeningRef.current) restartListeningRef.current();
       return;
     }
     if (closingTimerRef.current) {
@@ -1333,16 +1386,56 @@ export const useVoiceAssistantNative = () => {
     const goCart = /(apri|mostra|vai|portami).*(il\s+)?carrello|^carrello$/;
     const goOffers = /(apri|mostra|vai|portami).*(offerte|in offerta|sconti)|^(offerte|sconti|saldi)$/;
     const goHome = /(torna|vai).*(home|pagina iniziale)|^home$/;
-    const goProducts = /(apri|mostra|vai|portami).*(pagina\s+)?prodotti|^tutti i prodotti$|^prodotti$|^catalogo$|^mostra tutto$|^mostrami tutto$/;
+    // escludi frasi che contengono "carrello"
+    const goProducts = /((apri|mostra|vai|portami).*(pagina\s+)?prodotti(?!.*carrello))|^tutti i prodotti$|^prodotti$|^catalogo$|^mostra tutto$|^mostrami tutto$/;
     const describe = /^(descrivi|descrizione|dettagli|info( prodotto)?)$/;
-    const readCart = /(elenca|leggi|dimmi|quali).*(prodotti|articoli).*(nel\s+)?carrello|cosa.*(c\s'?|è|ho).*(nel\s+)?carrello/;
+    // includi anche “mostra i prodotti nel carrello”
+    const readCart = /(elenca|leggi|dimmi|quali|mostra).*(prodotti|articoli).*(nel\s+)?carrello|cosa.*(c\s'?|è|ho).*(nel\s+)?carrello/;
+    // 🗑️ svuota/rimuovi tutto dal carrello (locale)
+    const clearCartRe = /(svuota|svuotare|svuotalo|svuotami|rimuovi|togli|cancella).*(tutti|tutto)?.*(prodotti|articoli)?.*(dal\s+)?carrello/;
     const openByName = /(?:mostra|apri).*(?:il\s+)?prodotto\s+(.+)/;
     const normalizeKey = (s='') => (s).toString().normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    // parsing “aggiungi/metti nel carrello … taglia X … colore Y”
+    const addToCartRe = /(aggiungi|metti|mettilo|mettila).*(nel\s+)?carrello(?::|\s|\,)*(?:.*?(taglia)\s+([xslm]{1,3}|xs|xxs|xl|xxl|s|m|l))?(?:.*?(colore)\s+([a-zà-ù\s]+))?/i;
+    const sizeMap = { xs:'XS', xxs:'XXS', s:'S', m:'M', l:'L', xl:'XL', xxl:'XXL' };
+    const colorMap = {
+      'nero':'nero', 'black':'nero',
+      'bianco':'bianco', 'white':'bianco',
+      'blu':'blu', 'blu navy':'blu navy', 'navy':'blu navy', 'blu scuro':'blu navy',
+      'azzurro':'azzurro',
+      'rosso':'rosso', 'borgogna':'bordeaux', 'bordeaux':'bordeaux',
+      'verde':'verde', 'verde oliva':'verde oliva', 'oliva':'verde oliva',
+      'grigio':'grigio', 'grigio melange':'grigio melange', 'melange':'grigio melange', 'antracite':'grigio antracite',
+      'beige':'beige', 'panna':'panna', 'crema':'panna',
+      'cammello':'cammello',
+      'rosa':'rosa',
+      'marrone':'marrone',
+      'giallo':'giallo',
+      'viola':'viola'
+    };
+    const canonColor = (raw='') => {
+      const s = raw.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
+      const keys = Object.keys(colorMap).sort((a,b)=>b.length-a.length);
+      for (const k of keys) if (s.includes(k)) return colorMap[k];
+      return s || undefined;
+    };
     if (goCart.test(lower)) {
       turnLockRef.current = true;
       setIsProcessing(true); isProcessingRef.current = true;
       functionQueueRef.current.push({ name: 'get_cart_summary', params: {} });
       drainFunctionQueue();
+      return;
+    }
+    // PRIORITÀ: lettura carrello prima del matcher "prodotti"
+    if (readCart.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      const summary = buildCartSpeechSummary(6);
+      speak(summary, () => {
+        setIsProcessing(false);
+        isProcessingRef.current = false;
+        if (restartListeningRef.current) restartListeningRef.current();
+      }, false, { enqueue: false });
       return;
     }
     if (goOffers.test(lower)) {
@@ -1356,6 +1449,13 @@ export const useVoiceAssistantNative = () => {
       turnLockRef.current = true;
       setIsProcessing(true); isProcessingRef.current = true;
       functionQueueRef.current.push({ name: 'navigate_to_page', params: { page: 'home' } });
+      drainFunctionQueue();
+      return;
+    }
+    if (clearCartRe.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      functionQueueRef.current.push({ name: 'clear_cart', params: {} });
       drainFunctionQueue();
       return;
     }
@@ -1379,6 +1479,23 @@ export const useVoiceAssistantNative = () => {
       }, false, { enqueue: false });
       return;
     }
+    // ✅ aggiungi al carrello locale dal prodotto corrente
+    if (addToCartRe.test(text) && window.currentProductContext?.id) {
+      const m2 = text.match(addToCartRe);
+      const rawSize = (m2?.[3] || '').toLowerCase();
+      const rawColor = (m2?.[4] || '').toLowerCase();
+      const size = sizeMap[rawSize] || undefined;
+      const color = canonColor(rawColor) || undefined;
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      functionQueueRef.current.push({
+        name: 'add_to_cart',
+        params: { product_id: window.currentProductContext.id, size: size || 'M', color: color || 'nero', quantity: 1 }
+      });
+      drainFunctionQueue();
+      return;
+    }
+
     // ✅ apri prodotto per nome parziale (mappa locale)
     const m = lower.match(openByName);
     if (m && m[1]) {
