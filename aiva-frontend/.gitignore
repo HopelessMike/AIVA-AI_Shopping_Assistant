@@ -17,6 +17,3 @@ venv/
 .venv/
 **/venv/
 **/.venv/
-
-.vscode
-.cursorignore

@@ -1699,6 +1699,83 @@ async def process_voice_command(request: VoiceRequest):
         "success": True
     }
 
+# ---------------------------------------------------------------------------
+# Vercel-compatible voice endpoint (HTTP, no WebSocket required)
+# Returns the full turn as a list of events in one response
+@app.post("/api/voice/command")
+async def voice_command(req: VoiceRequest):
+    events: List[Dict[str, Any]] = []
+    # Prepend processing_start for immediate UX feedback
+    events.append({
+        "type": "processing_start",
+        "message": "Sto elaborando la tua richiesta..."
+    })
+
+    # Build context similar to the WebSocket path, merging client context
+    client_ctx = req.context or {}
+
+    # Current product details if provided by client
+    current_product_details = None
+    cp = client_ctx.get("current_product")
+    if cp and isinstance(cp, dict) and cp.get("id"):
+        prod = data_store.get_product_by_id(cp["id"])
+        if prod:
+            current_product_details = {
+                "id": prod.id,
+                "name": prod.name,
+                "category": prod.category,
+                "gender": prod.gender,
+                "variants": [
+                    {
+                        "size": v.size,
+                        "color": v.color,
+                        "available": v.available,
+                        "stock": v.stock
+                    } for v in prod.variants
+                ]
+            }
+
+    visible_products_details = []
+    for pid in (client_ctx.get("visible_products") or [])[:24]:
+        p = data_store.get_product_by_id(pid)
+        if p:
+            visible_products_details.append({
+                "id": p.id, "name": p.name,
+                "category": p.category, "gender": p.gender
+            })
+
+    visible_products_map = client_ctx.get("visible_products_map") or {}
+
+    context = {
+        "session_id": req.session_id or data_store.session_id,
+        "preferences": {},
+        "current_page": client_ctx.get("current_page", data_store.current_page),
+        "cart_count": (len(client_ctx.get("cart", [])) if isinstance(client_ctx.get("cart"), list) else data_store.cart.item_count),
+        "cart": client_ctx.get("cart", []),
+        "cart_items_map": client_ctx.get("cart_items_map", {}),
+        "current_product": current_product_details,
+        "visible_products": visible_products_details,
+        "visible_products_map": visible_products_map,
+        "ui_filters": client_ctx.get("ui_filters", {})
+    }
+
+    try:
+        from ai_service import process_voice_command_streaming
+        async for chunk in process_voice_command_streaming(req.text, context):
+            # Filter out any streaming-only events (not expected after recent changes)
+            if chunk.get("type") in {"text_chunk", "stream_start", "stream_complete"}:
+                continue
+            events.append(chunk)
+    except Exception as e:
+        logger.error(f"AI processing error (HTTP): {e}")
+        events.append({"type": "error", "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi."})
+
+    # Ensure a final complete event
+    if not any(e.get("type") == "complete" for e in events):
+        events.append({"type": "complete", "message": None})
+
+    return {"events": events}
+
 # Information Endpoints
 @app.get("/api/size-guide/{category}")
 async def get_size_guide(category: str):

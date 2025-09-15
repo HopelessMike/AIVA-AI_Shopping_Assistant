@@ -72,10 +72,10 @@ Once the server is running, you can access:
 - **Smart Recommendations**: Outfit suggestions and complementary items
 - **Promotions**: Discount percentages and sale items highlighted
 
-### WebSocket Streaming
-- **Real-time Voice**: WebSocket endpoint for streaming responses
-- **Low Latency**: Immediate response initiation before function completion
-- **Session Management**: User preferences and history tracking
+### WebSocket Messaging (single-shot TTS)
+- **Real-time control** via WebSocket. Le risposte testuali sono inviate come singola `response` seguita da `complete` (niente `text_chunk`).
+- **Low Latency**: Messaggi funzione `function_start`/`function_complete` permettono feedback immediato.
+- **Session Management**: Preferenze utente e contesto pagina inviati dal frontend.
 
 ## 🔧 Configuration
 
@@ -131,11 +131,11 @@ aiva-backend/
 - `GET /` - Root endpoint
 - `GET /health` - Health check
 
-### WebSocket Streaming
-- `WS /ws/{session_id}` - Real-time voice streaming
+### WebSocket
+- `WS /ws/{session_id}` - Messaggistica real-time (no speech chunks)
 
 ### Voice/AI Endpoints
-- `POST /api/voice/process` - Process voice commands (Italian)
+- `POST /api/voice/process` - Elaborazione comandi vocali (Italiano)
 
 ### Product Endpoints
 - `GET /api/products` - List products with advanced filtering
@@ -233,11 +233,9 @@ python test_api.py
 - **Relevance scoring**: Products ranked by match quality
 - **Category inference**: Understands related terms
 
-### Streaming Optimization
-- **Immediate responses**: TTS starts before function completion
-- **Chunked streaming**: Progressive response delivery
-- **Session caching**: User preferences remembered
-- **Parallel processing**: Search while streaming response
+### Runtime Notes
+- **No text streaming**: Le descrizioni e i testi lunghi vengono aggregati server-side e inviati come `response` unica.
+- **Function-first UX**: Navigazione/filtri inviati come `function_complete` per azioni istantanee lato UI.
 
 ## 🐛 Troubleshooting
 

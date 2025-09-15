@@ -69,9 +69,9 @@ The app will open at `http://localhost:5173`
 - **Lucide Icons** - Icon set
 
 ### Voice Features
-- **React Speech Recognition** - Voice input
-- **Web Speech API** - Browser native TTS
-- **WebSocket** - Real-time communication
+- **Web Speech API (ASR/TTS)** - Riconoscimento e sintesi nativi
+- **TTS Queue + Barge‑in** - Coda di frasi con chaining e interruzione RMS
+- **WebSocket** - Messaggi strutturati (response/complete, function_*). Nessun text_chunk lato UI
 
 ### State & Data
 - **Zustand** - State management
@@ -127,14 +127,10 @@ aiva-frontend/
 
 ## 🎨 Component Architecture
 
-### VoiceAssistant Component
+### Hook `useVoiceAssistantNative`
 ```jsx
-<VoiceAssistant
-  onProductSearch={handleSearch}
-  onNavigate={handleNavigation}
-  onAddToCart={handleAddToCart}
-  onShowProduct={handleProductView}
-/>
+// Gestisce ASR, TTS, WS, intent locali, barge‑in e turni
+const assistant = useVoiceAssistantNative();
 ```
 
 ### Key Props:
@@ -229,7 +225,7 @@ vercel deploy
 netlify deploy --prod
 ```
 
-## 🔒 Security Features
+## 🔒 Security & Stability
 
 - Content Security Policy
 - XSS protection
@@ -237,6 +233,8 @@ netlify deploy --prod
 - Secure WebSocket connections
 - Input sanitization
 - Rate limiting aware
+- Single WS connection per tab (HMR safe)
+- Drop di messaggi WS “stale” dopo barge‑in
 
 ## 🐛 Troubleshooting
 

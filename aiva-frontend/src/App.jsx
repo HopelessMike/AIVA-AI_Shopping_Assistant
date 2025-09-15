@@ -357,48 +357,35 @@ const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
 
 // Footer Component
 const Footer = () => {
+  const scrollTop = () => {
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch {}
+  };
   return (
     <footer className="bg-gray-900 text-gray-300 py-12 px-4">
-      <div className="max-w-7xl mx-auto grid md:grid-cols-4 gap-8">
+      <div className="max-w-7xl mx-auto grid md:grid-cols-3 gap-8">
         <div>
           <h3 className="text-white font-bold text-xl mb-4">AIVA Fashion</h3>
-          <p className="text-sm">Il futuro dello shopping è vocale</p>
+          <p className="text-sm">Concept interattivo per portfolio – non è un e‑commerce reale.</p>
+        </div>
+        <div>
+          <h4 className="text-white font-semibold mb-4">Info</h4>
+          <p className="text-sm leading-6">
+            Questo sito è un progetto dimostrativo creato da Michele Miranda per mostrare
+            integrazione tra assistente vocale, AI e interfaccia e‑commerce. I prodotti,
+            i prezzi e le promozioni hanno scopo illustrativo.
+          </p>
         </div>
         <div>
           <h4 className="text-white font-semibold mb-4">Shop</h4>
           <ul className="space-y-2 text-sm">
-            <li><a href="/products" className="hover:text-white transition">Uomo</a></li>
-            <li><a href="/products" className="hover:text-white transition">Donna</a></li>
-            <li><a href="/products" className="hover:text-white transition">Accessori</a></li>
+            <li><a href="/products" className="hover:text-white transition">Prodotti</a></li>
             <li><a href="/offers" className="hover:text-white transition">Offerte</a></li>
+            <li><button onClick={scrollTop} className="hover:text-white transition">Torna Su</button></li>
           </ul>
-        </div>
-        <div>
-          <h4 className="text-white font-semibold mb-4">Assistenza</h4>
-          <ul className="space-y-2 text-sm">
-            <li><a href="#" className="hover:text-white transition">Contatti</a></li>
-            <li><a href="#" className="hover:text-white transition">Spedizioni</a></li>
-            <li><a href="#" className="hover:text-white transition">Resi</a></li>
-            <li><a href="#" className="hover:text-white transition">FAQ</a></li>
-          </ul>
-        </div>
-        <div>
-          <h4 className="text-white font-semibold mb-4">Seguici</h4>
-          <p className="text-sm mb-4">Iscriviti per offerte esclusive</p>
-          <div className="flex gap-2">
-            <input 
-              type="email" 
-              placeholder="Email"
-              className="flex-1 px-3 py-2 bg-gray-800 rounded-lg text-white placeholder-gray-400"
-            />
-            <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              Iscriviti
-            </button>
-          </div>
         </div>
       </div>
       <div className="max-w-7xl mx-auto mt-8 pt-8 border-t border-gray-800 text-center text-sm">
-        <p>© 2025 AIVA Fashion - Demo Portfolio Michele Miranda</p>
+        <p>© 2025 AIVA Fashion – Concept per il portfolio di Michele Miranda</p>
       </div>
     </footer>
   );

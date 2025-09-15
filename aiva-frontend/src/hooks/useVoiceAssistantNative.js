@@ -1338,19 +1338,32 @@ export const useVoiceAssistantNative = () => {
     handleWSMessageRef.current = handleWebSocketMessage;
   }, [handleWebSocketMessage]);
 
-  // Send message to WebSocket
-  const sendMessage = useCallback((message) => {
-    const ws = WS_SINGLETON.ws;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      try {
-        ws.send(JSON.stringify(message));
-      } catch (e) {
-        console.warn('WS send failed, queueing', e);
-        WS_SINGLETON.queue.push(message);
+  // Send message transport: WS by default, HTTP when Vercel mode
+  const sendMessage = useCallback(async (message) => {
+    const vercelMode = (import.meta?.env?.VITE_VERCEL_MODE === 'true') || (typeof window !== 'undefined' && window.VERCEL_MODE === true);
+    if (!vercelMode) {
+      const ws = WS_SINGLETON.ws;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify(message)); return; } catch (e) { console.warn('WS send failed, fallback HTTP', e); }
       }
-    } else {
-      console.warn('WS not open, queueing message');
-      WS_SINGLETON.queue.push(message);
+    }
+    // HTTP fallback (Serverless friendly)
+    try {
+      if (message?.type === 'voice_command') {
+        const res = await fetch('/api/voice/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: message.text, context: message.context, session_id: message.context?.session_id })
+        });
+        const json = await res.json();
+        const events = Array.isArray(json?.events) ? json.events : [];
+        for (const evt of events) {
+          try { handleWSMessageRef.current && handleWSMessageRef.current(evt); } catch {}
+        }
+      }
+    } catch (err) {
+      console.error('HTTP voice command failed', err);
+      handleWSMessageRef.current && handleWSMessageRef.current({ type: 'error', message: 'Errore richiesta voce' });
     }
   }, []);
 
