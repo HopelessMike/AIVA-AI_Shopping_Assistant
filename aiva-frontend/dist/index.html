@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AIVA Fashion - Il futuro dello shopping è vocale. Assistente AI per e-commerce fashion con comandi vocali in italiano." />
+    <meta name="keywords" content="AI, voice assistant, e-commerce, fashion, shopping, italiano" />
+    <meta name="author" content="Michele Miranda" />
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="AIVA Fashion - Voice-Enabled E-commerce" />
+    <meta property="og:description" content="Shopping del futuro con assistente vocale AI in italiano" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://aiva-fashion.michelemiranda.com" />
+    <meta property="og:image" content="/og-image.jpg" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#667eea" />
+    <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <title>AIVA Fashion - AI Voice Shopping Assistant</title>
+    
+    <!-- Favicon alternatives for different devices -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    
+    <!-- Preload critical resources -->
+    
+    <!-- Analytics (optional) -->
+    <!-- Google Analytics or other tracking scripts here -->
+    
+    <style>
+      /* Critical CSS for initial load */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      
+      /* Noscript fallback */
+      noscript {
+        display: block;
+        padding: 20px;
+        background: #ff4757;
+        color: white;
+        text-align: center;
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-DWtFkBzA.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/react-vendor-s-cJrWiB.js">
+    <link rel="modulepreload" crossorigin href="/assets/animation-DnWryeXm.js">
+    <link rel="modulepreload" crossorigin href="/assets/ui-DimoD9uR.js">
+    <link rel="modulepreload" crossorigin href="/assets/voice-BWufaHyz.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-ChT8_YXV.css">
+  </head>
+  <body>
+    <!-- React Root -->
+    <div id="root"></div>
+    
+    <!-- Noscript Fallback -->
+    <noscript>
+      <strong>JavaScript è richiesto per utilizzare AIVA Fashion.</strong>
+      <br>
+      Per favore, abilita JavaScript nel tuo browser per continuare.
+    </noscript>
+    
+    <!-- Module Script -->
+    
+    <script>
+      // Register Service Worker for PWA (optional)
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {
+            // Service worker registration failed, app will still work
+          });
+        });
+      }
+      
+      // Check for voice API support
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        console.warn('Speech recognition not supported in this browser');
+      }
+    </script>
+  </body>
+</html>
