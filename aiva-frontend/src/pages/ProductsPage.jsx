@@ -32,13 +32,19 @@ const ProductCard = ({ product, onAddToCart, onToggleFavorite, isFavorite }) => 
           animate={{ scale: isHovered ? 1.1 : 1 }}
           transition={{ duration: 0.3 }}
         />
-        {(product.discount_percentage || product.discount) && (
+        {(() => {
+          const discount = Number(product.discount_percentage ?? product.discount ?? 0);
+          const original = Number(product.original_price ?? product.originalPrice ?? 0);
+          const price = Number(product.price ?? 0);
+          const hasDiscount = discount > 0 && original > price;
+          return hasDiscount;
+        })() && (
           <motion.div
             className="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-bold"
             initial={{ rotate: -15 }}
             animate={{ rotate: isHovered ? 0 : -15 }}
           >
-            -{product.discount_percentage || product.discount}%
+            -{Number(product.discount_percentage ?? product.discount ?? 0)}%
           </motion.div>
         )}
         <motion.div
@@ -77,12 +83,16 @@ const ProductCard = ({ product, onAddToCart, onToggleFavorite, isFavorite }) => 
         </div>
         <div className="flex items-center justify-between">
           <div>
-            {(product.original_price || product.originalPrice) && (
-              <span className="text-sm text-gray-400 line-through mr-2">
-                €{product.original_price || product.originalPrice}
-              </span>
-            )}
-            <span className="text-xl font-bold text-gray-900">€{product.price}</span>
+            {(() => {
+              const discount = Number(product.discount_percentage ?? product.discount ?? 0);
+              const original = Number(product.original_price ?? product.originalPrice ?? 0);
+              const price = Number(product.price ?? 0);
+              const hasDiscount = discount > 0 && original > price;
+              return hasDiscount ? (
+                <span className="text-sm text-gray-400 line-through mr-2">€{original.toFixed(2)}</span>
+              ) : null;
+            })()}
+            <span className="text-xl font-bold text-gray-900">€{Number(product.price ?? 0).toFixed(2)}</span>
           </div>
           <motion.button
             onClick={(e) => {

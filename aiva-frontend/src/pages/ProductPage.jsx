@@ -208,15 +208,16 @@ const ProductPage = () => {
 
               {/* Price */}
               <div className="mb-6">
-                {product.original_price && (
-                  <span className="text-lg text-gray-400 line-through mr-2">
-                    €{product.original_price}
-                  </span>
-                )}
-                <span className="text-3xl font-bold text-gray-900">€{product.price}</span>
-                {product.discount_percentage && (
+                {(() => {
+                  const hasDiscount = Number(product.discount_percentage ?? 0) > 0 && Number(product.original_price ?? 0) > Number(product.price ?? 0);
+                  return hasDiscount ? (
+                    <span className="text-lg text-gray-400 line-through mr-2">€{Number(product.original_price ?? 0).toFixed(2)}</span>
+                  ) : null;
+                })()}
+                <span className="text-3xl font-bold text-gray-900">€{Number(product.price ?? 0).toFixed(2)}</span>
+                {Number(product.discount_percentage ?? 0) > 0 && (
                   <span className="ml-3 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-bold">
-                    -{product.discount_percentage}%
+                    -{Number(product.discount_percentage ?? 0)}%
                   </span>
                 )}
               </div>

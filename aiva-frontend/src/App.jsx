@@ -100,7 +100,11 @@ const VoiceAssistantButton = ({
   
   return (
     <motion.div
-      className="fixed bottom-8 right-8 z-40"
+      className="fixed bottom-4 right-4 md:bottom-8 md:right-8 z-[120] pointer-events-auto"
+      style={{
+        bottom: `calc(env(safe-area-inset-bottom, 0px) + 1rem)`,
+        right: `calc(env(safe-area-inset-right, 0px) + 1rem)`
+      }}
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
       transition={{ delay: 0.5, type: "spring", stiffness: 260, damping: 20 }}

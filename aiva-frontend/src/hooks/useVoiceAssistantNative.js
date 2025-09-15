@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createWebSocketConnection, productAPI } from '../services/api';
 import { useCart } from './useCart';
+import { buildCartSpeechSummary } from './useCart';
 import useStore from '../store';
 
 export const useVoiceAssistantNative = () => {
@@ -34,14 +35,44 @@ export const useVoiceAssistantNative = () => {
   const processingOwnedBySpeechRef = useRef(false);
   // Listener WS aggiornabile senza dipendenze cicliche
   const handleWSMessageRef = useRef(null);
+  const restartListeningRef = useRef(null);
 
   const queuedMessagesRef = useRef([]);
   const inactivityTimeoutRef = useRef(null);
   const streamBufferRef = useRef('');
+  const isStreamingTTSRef = useRef(false);
+  const streamReleasePendingRef = useRef(false);
+  const utterQueueRef = useRef([]);
+  const ttsSafetyTimerRef = useRef(null);
+  const hasSpokenThisTurnRef = useRef(false);
   const isAssistantActiveRef = useRef(false);
+  const isConnectedRef = useRef(false);
   const lastInteractionRef = useRef(Date.now());
   const isRestartingRef = useRef(false); // ✅ NUOVO: Previene riavvii multipli
   const selectedVoiceRef = useRef(null); // ✅ NUOVO: Memorizza la voce selezionata
+  // 🔊 Barge-in RMS
+  const bargeInCtxRef = useRef(null);
+  const bargeInStreamRef = useRef(null);
+  const bargeInAnalyserRef = useRef(null);
+  const bargeInRafRef = useRef(null);
+  // Durate finestra di ascolto e chiusura
+  const LISTENING_WINDOW_MS = 11000;
+  const CLOSING_GRACE_MS = 3000;
+  const NO_INPUT_MESSAGES = [
+    "Se hai bisogno di altro, sono qui.",
+    "Ok! Buon proseguimento, chiamami se ti serve aiuto.",
+    "Resto a disposizione se ti serve altro."
+  ];
+  const listeningTimerRef = useRef(null);
+  const activeListenSessionIdRef = useRef(null);
+  const beepedThisSessionRef = useRef(false);
+  const closingTimerRef = useRef(null);
+  const turnLockRef = useRef(false);
+
+  const clearListeningTimers = useCallback(() => {
+    if (listeningTimerRef.current) { clearTimeout(listeningTimerRef.current); listeningTimerRef.current = null; }
+    if (closingTimerRef.current) { clearTimeout(closingTimerRef.current); closingTimerRef.current = null; }
+  }, []);
 
   // 🔧 nuove ref in cima, vicino agli altri useRef:
   const isSpeakingRef = useRef(false);
@@ -76,6 +107,49 @@ export const useVoiceAssistantNative = () => {
     } catch {}
   }, []);
 
+  // 🔊 Avvio/stop monitor barge-in: interrompe TTS se rileva voce per ~200ms
+  const startBargeInMonitor = useCallback(async () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!bargeInCtxRef.current) bargeInCtxRef.current = new AudioCtx();
+      const ctx = bargeInCtxRef.current;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      bargeInStreamRef.current = stream;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      bargeInAnalyserRef.current = analyser;
+      src.connect(analyser);
+      let above = 0;
+      const thresh = 0.02; // RMS ≈ 2%
+      const need = 12;     // ~12 * 16ms ≈ 200ms
+      const data = new Uint8Array(analyser.fftSize);
+      const tick = () => {
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+        const rms = Math.sqrt(sum / data.length);
+        above = rms > thresh ? above + 1 : 0;
+        if (above >= need) {
+          try { window.speechSynthesis.cancel(); } catch {}
+          if (restartListeningRef.current) restartListeningRef.current();
+          stopBargeInMonitor();
+          return;
+        }
+        bargeInRafRef.current = requestAnimationFrame(tick);
+      };
+      bargeInRafRef.current = requestAnimationFrame(tick);
+    } catch {}
+  }, []);
+
+  const stopBargeInMonitor = useCallback(() => {
+    try { if (bargeInRafRef.current) cancelAnimationFrame(bargeInRafRef.current); } catch {}
+    bargeInRafRef.current = null;
+    try { if (bargeInStreamRef.current) bargeInStreamRef.current.getTracks().forEach(t => t.stop()); } catch {}
+    bargeInStreamRef.current = null;
+  }, []);
+
   const safeStopRecognition = useCallback(() => {
     if (recognitionRef.current) {
       try {
@@ -94,6 +168,7 @@ export const useVoiceAssistantNative = () => {
   useEffect(() => { isUserTurnRef.current = isUserTurn; }, [isUserTurn]);
   useEffect(() => { isExecutingFunctionRef.current = isExecutingFunction; }, [isExecutingFunction]);
   useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
+  useEffect(() => { isConnectedRef.current = isConnected; }, [isConnected]);
 
   // drainFunctionQueue is defined after executeFunction to avoid TDZ
 
@@ -212,6 +287,24 @@ export const useVoiceAssistantNative = () => {
     };
   }, [selectBestItalianVoice]);
 
+  // ✅ UTIL: segmenta testo in frasi per TTS enqueue
+  const segmentTextIntoSentences = useCallback((text) => {
+    const parts = (text || '').split(/(?<=[\.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    return parts.length ? parts : [(text || '').trim()].filter(Boolean);
+  }, []);
+
+  // ✅ RILASCIO TURNO SICURO post TTS
+  const releaseTurnIfIdle = useCallback(() => {
+    if (!window.speechSynthesis.speaking && !isSpeakingRef.current && utterQueueRef.current.length === 0) {
+      turnLockRef.current = false;
+      setIsProcessing(false);
+      isProcessingRef.current = false;
+      if (isAssistantActiveRef.current && functionQueueRef.current.length === 0) {
+        if (restartListeningRef.current) restartListeningRef.current();
+      }
+    }
+  }, []);
+
   // ✅ EXECUTE FUNCTION - Unchanged from previous version
   const executeFunction = useCallback(async (functionName, parameters) => {
     console.log('🎯 Executing function:', functionName, parameters);
@@ -248,6 +341,20 @@ export const useVoiceAssistantNative = () => {
           const path = pageMap[parameters.page] || '/';
           console.log('📍 Navigating to:', path);
           navigate(path);
+          // conferma breve + rilascio turno in onEnd
+          speak(
+            path === '/cart' ? 'Ecco il carrello.' : (path === '/offers' ? 'Ecco le offerte.' : 'Ecco!'),
+            () => {
+              // fine ack → chiudi loading e riapri mic
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            },
+            false,
+            { enqueue: false }
+          );
+          // fallback: se l'ack fosse mutato, prova comunque dopo la nav
+          scheduleListenAfterNav(1000);
           break;
           
         case 'search_products':
@@ -285,6 +392,12 @@ export const useVoiceAssistantNative = () => {
               }
             }, 500);
           }
+          // Ack e rilascio del turno al termine
+          speak('Ecco!', () => {
+            setIsProcessing(false); isProcessingRef.current = false;
+            turnLockRef.current = false;
+            if (restartListeningRef.current) restartListeningRef.current();
+          }, false, { enqueue: false });
           break;
 
         
@@ -296,12 +409,22 @@ export const useVoiceAssistantNative = () => {
           } else {
             applyUIFilters(parameters.filters || {});
           }
+          speak('Fatto.', () => {
+            setIsProcessing(false); isProcessingRef.current = false;
+            turnLockRef.current = false;
+            if (restartListeningRef.current) restartListeningRef.current();
+          }, false, { enqueue: false });
           break;
           
         case 'get_product_details':
           const productId = parameters.product_id;
           console.log('📦 Showing product:', productId);
           navigate(`/products/${productId}`);
+          speak('Ecco!', () => {
+            setIsProcessing(false); isProcessingRef.current = false;
+            turnLockRef.current = false;
+            if (restartListeningRef.current) restartListeningRef.current();
+          }, false, { enqueue: false });
           break;
 
         case 'open_product_by_name': {
@@ -309,12 +432,14 @@ export const useVoiceAssistantNative = () => {
           const id = window.visibleProductsMap?.[name];
           if (id) {
             navigate(`/products/${id}`);
+            scheduleListenAfterNav(800);
           } else {
             // fallback: porta sulla lista e applica query
             navigate('/products');
             setTimeout(() => {
               if (window.applyProductFilters) window.applyProductFilters({ query: parameters?.name });
             }, 300);
+            scheduleListenAfterNav(800);
           }
           break;
         }
@@ -367,17 +492,43 @@ export const useVoiceAssistantNative = () => {
                 parameters.quantity || 1
               );
             }
+            speak('Aggiunto al carrello.', () => {
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            }, false, { enqueue: false });
           } catch (error) {
             console.error('Error adding to cart:', error);
+            speak('Non sono riuscita ad aggiungerlo al carrello.', () => {
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            }, false, { enqueue: false });
           }
           break;
           
-        case 'remove_from_cart':
-          console.log('🗑️ Removing from cart:', parameters.item_id);
-          if (parameters.item_id) {
-            await removeFromCart(parameters.item_id);
+        case 'remove_from_cart': {
+          const { item_id, product_name, size, color } = parameters || {};
+          let id = item_id;
+          if (!id && product_name) {
+            const key = (s => (s || '')
+              .toString()
+              .normalize('NFD')
+              .replace(/\p{Diacritic}/gu, '')
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, ' ')
+              .trim())(`${product_name} ${size || ''} ${color || ''}`);
+            id = window.cartItemsMap?.[key];
+          }
+          console.log('🗑️ Removing from cart:', id || item_id);
+          if (id) {
+            await removeFromCart(id);
+            speak('Ok, rimosso dal carrello.');
+          } else {
+            speak('Non trovo quel prodotto nel carrello. Puoi ripetere il nome o dirmi la taglia e il colore?');
           }
           break;
+        }
           
         case 'remove_last_cart_item':
           console.log('🗑️ Removing last cart item');
@@ -395,6 +546,11 @@ export const useVoiceAssistantNative = () => {
         case 'view_cart':
           console.log('🛒 Opening cart');
           navigate('/cart');
+          speak('Ecco il carrello.', () => {
+            setIsProcessing(false); isProcessingRef.current = false;
+            turnLockRef.current = false;
+            if (restartListeningRef.current) restartListeningRef.current();
+          }, false, { enqueue: false });
           break;
           
         case 'clear_cart':
@@ -406,6 +562,11 @@ export const useVoiceAssistantNative = () => {
         case 'show_offers':
           console.log('🏷️ Showing offers');
           navigate('/offers');
+          speak('Ecco le offerte.', () => {
+            setIsProcessing(false); isProcessingRef.current = false;
+            turnLockRef.current = false;
+            if (restartListeningRef.current) restartListeningRef.current();
+          }, false, { enqueue: false });
           break;
           
         case 'get_recommendations':
@@ -429,9 +590,17 @@ export const useVoiceAssistantNative = () => {
             for (const [gender, table] of Object.entries(guide)) {
               parts.push(`${gender}: ${Object.entries(table).map(([k,v])=>`${k}=${v}`).join(', ')}`);
             }
-            speak(`Ecco la guida taglie per ${parameters.category}: ${parts.join('. ')}`);
+            speak(`Ecco la guida taglie per ${parameters.category}: ${parts.join('. ')}` , () => {
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            }, false, { enqueue: false });
           } catch (e) {
-            speak('Non sono riuscita a recuperare la guida taglie al momento.');
+            speak('Non sono riuscita a recuperare la guida taglie al momento.', () => {
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            }, false, { enqueue: false });
           }
           break;
 
@@ -448,9 +617,19 @@ export const useVoiceAssistantNative = () => {
           setCurrentFunction(null);
           // passa alla prossima function in coda
           drainFunctionQueue();
-          // se non ci sono altre function, riapri il mic
-          if (isAssistantActiveRef.current && !isSpeaking && functionQueueRef.current.length === 0) {
-            restartListening();
+          // se non sta parlando nessuno ed è tutto fermo, rilascia il turno
+          if (!isSpeaking && !window.speechSynthesis.speaking) {
+            // safe release
+            turnLockRef.current = false;
+            setIsProcessing(false);
+            isProcessingRef.current = false;
+            if (
+              isAssistantActiveRef.current &&
+              !isRestartingRef.current &&
+              functionQueueRef.current.length === 0
+            ) {
+              restartListening();
+            }
           }
         }, 200); // ⬅️ più reattivo
     }
@@ -459,9 +638,31 @@ export const useVoiceAssistantNative = () => {
 
   // Now define drainFunctionQueue after executeFunction to avoid TDZ
   const drainFunctionQueue = useCallback(() => {
-    if (functionQueueRef.current.length === 0) return;
-    const { name, params } = functionQueueRef.current.shift();
-    executeFunction(name, params);
+    if (isExecutingFunctionRef.current) return;
+    const next = functionQueueRef.current.shift();
+    if (!next) return;
+    isExecutingFunctionRef.current = true;
+    setTimeout(async () => {
+      try {
+        await executeFunction(next.name, next.params);
+      } finally {
+        isExecutingFunctionRef.current = false;
+        if (functionQueueRef.current.length > 0) {
+          drainFunctionQueue();
+        } else {
+          if (
+            isAssistantActiveRef.current &&
+            !window.speechSynthesis.speaking &&
+            !isSpeakingRef.current &&
+            !isProcessingRef.current
+          ) {
+            if (restartListeningRef.current) {
+              restartListeningRef.current();
+            }
+          }
+        }
+      }
+    }, 0);
   }, [executeFunction]);
 
   // Apply UI filters helper
@@ -519,6 +720,20 @@ export const useVoiceAssistantNative = () => {
       setIsUserTurn(true);
       lastInteractionRef.current = Date.now();
       isRestartingRef.current = false; // ✅ Reset flag
+      // NON azzerare la finestra se è un riavvio nella stessa sessione
+      if (!listeningTimerRef.current) {
+        listeningTimerRef.current = setTimeout(() => {
+          if (!isSpeaking && !isProcessingRef.current) {
+            speak(NO_INPUT_MESSAGES[Math.floor(Math.random()*NO_INPUT_MESSAGES.length)], () => {
+              closingTimerRef.current = setTimeout(() => {
+                if (!isSpeaking && !isProcessingRef.current) {
+                  stopAssistant();
+                }
+              }, CLOSING_GRACE_MS);
+            });
+          }
+        }, LISTENING_WINDOW_MS);
+      }
     };
 
     recognition.onresult = (event) => {
@@ -542,9 +757,16 @@ export const useVoiceAssistantNative = () => {
 
         if (finalTranscript) {
           console.log('💬 User said:', finalTranscript);
+          // chiudi la sessione corrente: niente più beep o timer
+          clearListeningTimers();
+          activeListenSessionIdRef.current = null;
+          beepedThisSessionRef.current = false;
           setTranscript(finalTranscript);
           resetInactivityTimeout();
-          handleVoiceCommand(finalTranscript);
+          // Prende il lock direttamente handleVoiceCommand
+          if (!isProcessingRef.current) {
+            handleVoiceCommand(finalTranscript);
+          }
           
           // Stop recognition after getting final result
           if (recognitionRef.current) {
@@ -557,10 +779,7 @@ export const useVoiceAssistantNative = () => {
     recognition.onerror = (event) => {
       if (event.error === 'aborted') return;
       if (event.error === 'no-speech') {
-        if (isAssistantActiveRef.current && !isProcessingRef.current) {
-          setTimeout(() => restartListening(), 600);
-        }
-        return;
+        return; // lascia scadere la finestra 11s
       }
       // altri errori
       if (event.error === 'network') {
@@ -581,9 +800,21 @@ export const useVoiceAssistantNative = () => {
         !isRestartingRef.current &&
         !isProcessingRef.current &&
         !window.speechSynthesis.speaking &&
+        !turnLockRef.current &&
+        !closingTimerRef.current &&
         functionQueueRef.current.length === 0
       ) {
-        restartListening();
+        setTimeout(() => {
+          if (
+            isAssistantActiveRef.current &&
+            !isSpeaking &&
+            !isProcessingRef.current &&
+            !turnLockRef.current &&
+            !closingTimerRef.current
+          ) {
+            restartListening();
+          }
+        }, 500);
       }
     };
 
@@ -595,8 +826,8 @@ export const useVoiceAssistantNative = () => {
     if (
       isRestartingRef.current ||
       !isAssistantActiveRef.current ||
-      isSpeaking ||
-      isExecutingFunction ||
+      isSpeakingRef.current ||
+      isExecutingFunctionRef.current ||
       isProcessingRef.current ||                  // ⬅️ non riaprire durante processing
       functionQueueRef.current.length > 0 ||      // ⬅️ se ci sono function in coda
       window.speechSynthesis.speaking             // ⬅️ non durante TTS
@@ -604,8 +835,15 @@ export const useVoiceAssistantNative = () => {
       return;
     }
 
-    // Beep "pronto a parlare" (non durante processing)
-    playReadyBeep();
+    // Beep "pronto a parlare" SOLO la prima volta nella sessione
+    if (!activeListenSessionIdRef.current) {
+      activeListenSessionIdRef.current = `ls-${Date.now()}`;
+      beepedThisSessionRef.current = false;
+    }
+    if (!beepedThisSessionRef.current) {
+      playReadyBeep();
+      beepedThisSessionRef.current = true;
+    }
 
     isRestartingRef.current = true;
 
@@ -617,8 +855,8 @@ export const useVoiceAssistantNative = () => {
     setTimeout(() => {
       if (
         isAssistantActiveRef.current &&
-        !isSpeaking &&
-        !isExecutingFunction &&
+        !isSpeakingRef.current &&
+        !isExecutingFunctionRef.current &&
         !isProcessingRef.current
       ) {
         try {
@@ -631,6 +869,29 @@ export const useVoiceAssistantNative = () => {
       isRestartingRef.current = false;
     }, 220); // piccolo delay per non catturare il beep
   }, [isSpeaking, isExecutingFunction, initializeSpeechRecognition, playReadyBeep]);
+
+  // Programmatic restart dopo navigazioni/cambi DOM
+  const scheduleListenAfterNav = useCallback((delay = 700) => {
+    setTimeout(() => {
+      if (
+        isAssistantActiveRef.current &&
+        !isRestartingRef.current &&
+        !window.speechSynthesis.speaking &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current &&
+        functionQueueRef.current.length === 0
+      ) {
+        if (restartListeningRef.current) {
+          restartListeningRef.current();
+        }
+      }
+    }, delay);
+  }, []);
+
+  // Aggiorna la ref del restart dopo ogni render utile
+  useEffect(() => {
+    restartListeningRef.current = restartListening;
+  }, [restartListening]);
 
   // ✅ STOP ASSISTANT
   const stopAssistant = useCallback(() => {
@@ -646,14 +907,16 @@ export const useVoiceAssistantNative = () => {
     
     // Cancel speech
     if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
+      try { window.speechSynthesis.cancel(); } catch {}
     }
+    // ✅ svuota coda TTS e timer safety
+    utterQueueRef.current = [];
+    if (ttsSafetyTimerRef.current) { clearTimeout(ttsSafetyTimerRef.current); ttsSafetyTimerRef.current = null; }
     
     // Clear timeouts
-    if (inactivityTimeoutRef.current) {
-      clearTimeout(inactivityTimeoutRef.current);
-      inactivityTimeoutRef.current = null;
-    }
+    if (inactivityTimeoutRef.current) { clearTimeout(inactivityTimeoutRef.current); inactivityTimeoutRef.current = null; }
+    clearListeningTimers();          // ⬅️ importante
+    if (typeof stopBargeInMonitor === 'function') stopBargeInMonitor();
     
     // Reset all states
     setIsListening(false);
@@ -664,7 +927,12 @@ export const useVoiceAssistantNative = () => {
     setIsUserTurn(true);
     isAssistantActiveRef.current = false;
     isRestartingRef.current = false;
-    pendingFunctionRef.current = null;
+    // Svuota coda funzioni e rilascia il turno
+    functionQueueRef.current = [];
+    turnLockRef.current = false;
+    // Allinea subito i flag di processing
+    setIsProcessing(false);
+    isProcessingRef.current = false;
     
     console.log('✅ Assistant stopped');
   }, []);
@@ -699,7 +967,7 @@ export const useVoiceAssistantNative = () => {
 
   // Singleton WS & deduper globale (sopravvive all'HMR)
   if (!window.__AIVA_SINGLETON__) {
-    window.__AIVA_SINGLETON__ = { ws: null, listeners: new Set(), lastFnSigTs: new Map() };
+    window.__AIVA_SINGLETON__ = { ws: null, listeners: new Set(), queue: [], lastFnSigTs: new Map() };
   }
   const WS_SINGLETON = window.__AIVA_SINGLETON__;
 
@@ -708,6 +976,7 @@ export const useVoiceAssistantNative = () => {
     if (WS_SINGLETON.ws && WS_SINGLETON.ws.readyState === WebSocket.OPEN) {
       console.log('🔌 WebSocket reusing existing connection');
       setIsConnected(true);
+      wsRef.current = WS_SINGLETON.ws;
     } else {
       const connectWebSocket = () => {
         try {
@@ -717,11 +986,13 @@ export const useVoiceAssistantNative = () => {
           ws.onopen = () => {
             console.log('🔌 WebSocket connected');
             setIsConnected(true);
-            if (queuedMessagesRef.current.length > 0) {
-              for (const msg of queuedMessagesRef.current) {
-                ws.send(JSON.stringify(msg));
+            wsRef.current = ws;
+            // Flush global queue
+            if (WS_SINGLETON.queue && WS_SINGLETON.queue.length) {
+              for (const msg of WS_SINGLETON.queue) {
+                try { ws.send(JSON.stringify(msg)); } catch {}
               }
-              queuedMessagesRef.current = [];
+              WS_SINGLETON.queue = [];
             }
           };
 
@@ -741,6 +1012,8 @@ export const useVoiceAssistantNative = () => {
           ws.onclose = () => {
             console.log('WebSocket disconnected');
             setIsConnected(false);
+            wsRef.current = null;
+            WS_SINGLETON.ws = null;
             let attempts = 0;
             const attemptReconnect = () => {
               if (attempts >= 5) return;
@@ -770,79 +1043,112 @@ export const useVoiceAssistantNative = () => {
   }, []);
 
   // ✅ TEXT-TO-SPEECH CON VOCE ITALIANA FEMMINILE
-  const sanitizeTextForTTS = (s) => (s || '')
-    // blocchi di codice
-    .replace(/```[\s\S]*?```/g, ' ')
-    // inline code
-    .replace(/`[^`]*`/g, ' ')
-    // markdown base (*, **, _, ~, #, >, -)
-    .replace(/[\*_~>#-]+/g, ' ')
-    // link [testo](url) -> testo
-    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
-    // spazi multipli
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+  const sanitizeTextForTTS = (s) => {
+    let out = (s || '')
+      // blocchi di codice
+      .replace(/```[\s\S]*?```/g, ' ')
+      // inline code
+      .replace(/`[^`]*`/g, ' ')
+      // markdown base (*, **, _, ~, #, >, -)
+      .replace(/[\*_~>#-]+/g, ' ')
+      // link [testo](url) -> testo
+      .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+      // ➜ compattazione inventario: elimina "X pezzi in magazzino/disponibili"
+      .replace(/\b\d+\s+(pezzi?|in\s+magazzino|disponibili)\b[^,.]*[.,]?/gi, '')
+      // ➜ rimuovi quantificatori ripetuti per taglie/varianti
+      .replace(/(\btaglia\b[^.]*?)\s*(,\s*)?\b\d+\b[^.]*\./gi, '$1.')
+      // ➜ pronuncia taglie con lettere italiane
+      .replace(/\bXXXL\b/gi, 'ics ics ics elle')
+      .replace(/\bXXL\b/gi, 'ics ics elle')
+      .replace(/\bXL\b/gi, 'ics elle')
+      .replace(/\bXXS\b/gi, 'ics ics esse')
+      .replace(/\bXS\b/gi, 'ics esse')
+      // ➜ rimuovi domande guida non desiderate
+      .replace(/vuoi[^.?!]*(taglie|colori|materiali)[^.?!]*[.?!]/gi, ' ')
+      // spazi multipli
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return out;
+  };
 
-  const speak = useCallback((text, callback) => {
-    if ('speechSynthesis' in window) {
-      safeStopRecognition(); // assicura mic off
-      window.speechSynthesis.cancel();
+  const speak = useCallback((text, onEnd, immediate = false, options = {}) => {
+    const { enqueue = false } = options || {};
+    if (!('speechSynthesis' in window)) return;
+    try {
+      // assicurati che il mic sia off durante TTS
+      safeStopRecognition();
+      setIsSpeaking(true);
+      isSpeakingRef.current = true;
 
-      const utterance = new SpeechSynthesisUtterance(sanitizeTextForTTS(text));
-      utterance.lang = 'it-IT';
-      utterance.rate = 1.0;
-      utterance.pitch = 1.1;
-      utterance.volume = 0.9;
+      if (immediate) {
+        try { window.speechSynthesis.cancel(); } catch {}
+        utterQueueRef.current = [];
+      }
 
-      if (selectedVoiceRef.current) utterance.voice = selectedVoiceRef.current;
+      const sentences = enqueue ? segmentTextIntoSentences(sanitizeTextForTTS(text)) : [sanitizeTextForTTS(text)];
+      sentences.forEach(sentence => {
+        if (!sentence) return;
+        const utt = new SpeechSynthesisUtterance(sentence);
+        utt.lang = 'it-IT';
+        utt.rate = 1.0;
+        utt.pitch = 1.1;
+        utt.volume = 0.9;
+        if (selectedVoiceRef.current) utt.voice = selectedVoiceRef.current;
+        utt.onstart = () => {
+          setIsSpeaking(true);
+          isSpeakingRef.current = true;
+          setIsUserTurn(false);
+          hasSpokenThisTurnRef.current = true;
+          if (ttsSafetyTimerRef.current) { clearTimeout(ttsSafetyTimerRef.current); ttsSafetyTimerRef.current = null; }
+          // avvia barge-in
+          startBargeInMonitor();
+        };
+        utt.onend = () => {
+          // rimuovi l'elemento servito dalla coda
+          utterQueueRef.current.shift();
+          // se c'è un prossimo, catenalo subito
+          if (utterQueueRef.current.length > 0) {
+            const nextUtt = utterQueueRef.current[0];
+            try { if (nextUtt) window.speechSynthesis.speak(nextUtt); } catch {}
+          }
+          // se la coda è vuota, chiudi stato speaking PRIMA del callback
+          if (utterQueueRef.current.length === 0) {
+            stopBargeInMonitor();
+            setIsSpeaking(false);
+            isSpeakingRef.current = false;
+            if (streamReleasePendingRef.current) {
+              streamReleasePendingRef.current = false;
+              releaseTurnIfIdle();
+            }
+            if (typeof onEnd === 'function') onEnd();
+          }
+        };
+        utterQueueRef.current.push(utt);
+      });
 
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-        setIsUserTurn(false);
-      };
+      // avvia se non sta già parlando
+      if (!window.speechSynthesis.speaking) {
+        const next = utterQueueRef.current[0];
+        if (next) window.speechSynthesis.speak(next);
+      }
 
-      utterance.onend = () => {
-        setIsSpeaking(false);
-        setIsUserTurn(true);
-
-        // se lo stream/complete ha preso possesso del processing, chiudilo ora
-        if (processingOwnedBySpeechRef.current) {
-          setIsProcessing(false);
-          isProcessingRef.current = false; // ✅ allinea subito la ref
-          processingOwnedBySpeechRef.current = false;
-        }
-
-        // se ci sono altre function in coda, esegui; altrimenti riapri il mic
-        if (functionQueueRef.current.length > 0) {
-          drainFunctionQueue();
-        } else if (
-          isAssistantActiveRef.current &&
-          !isRestartingRef.current &&
-          !isProcessingRef.current &&
-          !window.speechSynthesis.speaking
-        ) {
-          restartListening();
-        }
-
-        if (callback) callback();
-      };
-
-      utterance.onerror = () => {
-        setIsSpeaking(false);
-        setIsUserTurn(true);
-        if (processingOwnedBySpeechRef.current) {
-          setIsProcessing(false);
-          processingOwnedBySpeechRef.current = false;
-        }
-        if (callback) callback();
-      };
-
-      window.speechSynthesis.speak(utterance);
-    }
-  }, [safeStopRecognition, drainFunctionQueue]);
+      // safety release se engine resta muto
+      if (!ttsSafetyTimerRef.current) {
+        ttsSafetyTimerRef.current = setTimeout(() => {
+          if (!window.speechSynthesis.speaking && utterQueueRef.current.length === 0) {
+            setIsSpeaking(false);
+            isSpeakingRef.current = false;
+            releaseTurnIfIdle();
+          }
+        }, 1500);
+      }
+    } catch {}
+  }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle]);
 
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback((data) => {
+    // ⛔ se non sono attivo, ignora il messaggio
+    if (!isAssistantActiveRef.current) return;
     console.log('📨 WebSocket message:', data.type);
     setMessages(prev => [...prev, data]);
     lastInteractionRef.current = Date.now();
@@ -850,8 +1156,12 @@ export const useVoiceAssistantNative = () => {
     switch (data.type) {
       case 'processing_start': {
         setIsProcessing(true);
+        isProcessingRef.current = true;
         setIsUserTurn(false);
+        processingOwnedBySpeechRef.current = false; // verrà true solo se parleremo
         safeStopRecognition(); // mic OFF
+        // prepara buffer per eventuale stream
+        streamBufferRef.current = '';
         break;
       }
 
@@ -861,24 +1171,37 @@ export const useVoiceAssistantNative = () => {
       }
 
       case 'stream_start': {
+        // Disabilita parlato chunk-by-chunk: bufferizza soltanto
         streamBufferRef.current = '';
+        isStreamingTTSRef.current = true;
+        streamReleasePendingRef.current = false;
         break;
       }
 
       case 'text_chunk': {
+        // Niente TTS qui: accumula e parleremo al stream_complete
         if (typeof data.content === 'string') {
-          streamBufferRef.current += data.content;
+          streamBufferRef.current += (data.content || '') + ' ';
         }
         break;
       }
 
       case 'stream_complete': {
-        if (streamBufferRef.current.trim()) {
-          const text = streamBufferRef.current;
-          streamBufferRef.current = '';
-          // parleremo; lo stato processing sarà chiuso al termine del TTS (vedi speak.onend)
+        // Parla una sola volta il buffer
+        isStreamingTTSRef.current = false;
+        const text = sanitizeTextForTTS(streamBufferRef.current.trim());
+        streamBufferRef.current = '';
+        if (text) {
           processingOwnedBySpeechRef.current = true;
-          speak(text);
+          speak(text, () => {
+            setIsProcessing(false);
+            isProcessingRef.current = false;
+            releaseTurnIfIdle();
+          }, false, { enqueue: false });
+        } else {
+          setIsProcessing(false);
+          isProcessingRef.current = false;
+          releaseTurnIfIdle();
         }
         break;
       }
@@ -898,50 +1221,75 @@ export const useVoiceAssistantNative = () => {
           window.__AIVA_SINGLETON__.lastFnSigTs.set(sig, now);
         }
 
-        setIsProcessing(true);
+        // Accoda la funzione; il draining partirà dopo 'complete'
+        setIsProcessing(false);
+        isProcessingRef.current = false;
         if (data.function && data.parameters) {
           functionQueueRef.current.push({ name: data.function, params: data.parameters });
-          drainFunctionQueue();
+        } else {
+          // Nessuna funzione valida: rilascia turno
+          turnLockRef.current = false;
+          releaseTurnIfIdle();
         }
         break;
       }
 
       case 'response': {
-        // brevi risposte non-streaming
         if (data.message) {
-          setIsProcessing(true); // busy durante TTS
+          setIsProcessing(true);
+          isProcessingRef.current = true;
           processingOwnedBySpeechRef.current = true;
-          speak(data.message);
+          speak(data.message, () => {
+            setIsProcessing(false);
+            isProcessingRef.current = false;
+            releaseTurnIfIdle();
+          }, false, { enqueue: false });
         }
         break;
       }
 
       case 'complete': {
-        // Se c'è un messaggio residuo, parlalo; altrimenti prosegui con la coda
+        // Se il server ha inviato stream chunks ma non message, il buffer è stato già parlato su stream_complete
         if (data.message) {
           processingOwnedBySpeechRef.current = true;
-          speak(data.message);
+          speak(data.message, () => {
+            setIsProcessing(false);
+            isProcessingRef.current = false;
+            releaseTurnIfIdle();
+          }, false, { enqueue: false });
         } else {
-          // Fine turno senza parlato: possiamo liberare il processing
-          setIsProcessing(false);
-          isProcessingRef.current = false; // ✅ allinea la ref
-          drainFunctionQueue();
-          // Se non ci sono function da eseguire, riapri il microfono
-          if (
-            functionQueueRef.current.length === 0 &&
-            isAssistantActiveRef.current &&
-            !window.speechSynthesis.speaking
-          ) {
-            restartListening();
+          if (!isStreamingTTSRef.current && utterQueueRef.current.length === 0 && !window.speechSynthesis.speaking) {
+            setIsProcessing(false);
+            isProcessingRef.current = false;
+            releaseTurnIfIdle();
+          } else {
+            if (ttsSafetyTimerRef.current) clearTimeout(ttsSafetyTimerRef.current);
+            ttsSafetyTimerRef.current = setTimeout(() => {
+              setIsProcessing(false);
+              isProcessingRef.current = false;
+              releaseTurnIfIdle();
+            }, 1500);
           }
+        }
+        // ✅ drena la coda funzioni allegata a questa risposta
+        if (functionQueueRef.current.length > 0 && !isExecutingFunctionRef.current) {
+          drainFunctionQueue();
         }
         break;
       }
 
-      case 'error':
+      case 'error': {
+        try { window.speechSynthesis.cancel(); } catch {}
+        utterQueueRef.current = [];
+        setIsSpeaking(false);
+        isSpeakingRef.current = false;
         setIsProcessing(false);
+        isProcessingRef.current = false;
+        turnLockRef.current = false;
         setError(data.message || 'Errore');
+        releaseTurnIfIdle();
         break;
+      }
     }
   }, [speak, executeFunction, stopAssistant]);
 
@@ -952,12 +1300,17 @@ export const useVoiceAssistantNative = () => {
 
   // Send message to WebSocket
   const sendMessage = useCallback((message) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log('📤 Sending message');
-      wsRef.current.send(JSON.stringify(message));
+    const ws = WS_SINGLETON.ws;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify(message));
+      } catch (e) {
+        console.warn('WS send failed, queueing', e);
+        WS_SINGLETON.queue.push(message);
+      }
     } else {
-      console.warn('WebSocket not connected, queueing message');
-      queuedMessagesRef.current.push(message);
+      console.warn('WS not open, queueing message');
+      WS_SINGLETON.queue.push(message);
     }
   }, []);
 
@@ -965,11 +1318,102 @@ export const useVoiceAssistantNative = () => {
   const handleVoiceCommand = useCallback((text) => {
     if (!text.trim()) return;
 
-    setMessages(prev => [...prev, { 
-      type: 'user', 
-      text,
-      timestamp: new Date().toISOString()
-    }]);
+    if (turnLockRef.current || isProcessingRef.current) {
+      console.log('🔒 Ignoro comando: turno in corso');
+      return;
+    }
+    if (closingTimerRef.current) {
+      console.log('⏳ Ignoro comando: chiusura in corso');
+      return;
+    }
+    turnLockRef.current = true;
+
+    const lower = text.toLowerCase();
+    // 🎯 Intent shortcuts lato client per comandi semplici
+    const goCart = /(apri|mostra|vai|portami).*(il\s+)?carrello|^carrello$/;
+    const goOffers = /(apri|mostra|vai|portami).*(offerte|in offerta|sconti)|^(offerte|sconti|saldi)$/;
+    const goHome = /(torna|vai).*(home|pagina iniziale)|^home$/;
+    const goProducts = /(apri|mostra|vai|portami).*(pagina\s+)?prodotti|^tutti i prodotti$|^prodotti$|^catalogo$|^mostra tutto$|^mostrami tutto$/;
+    const describe = /^(descrivi|descrizione|dettagli|info( prodotto)?)$/;
+    const readCart = /(elenca|leggi|dimmi|quali).*(prodotti|articoli).*(nel\s+)?carrello|cosa.*(c\s'?|è|ho).*(nel\s+)?carrello/;
+    const openByName = /(?:mostra|apri).*(?:il\s+)?prodotto\s+(.+)/;
+    const normalizeKey = (s='') => (s).toString().normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if (goCart.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      functionQueueRef.current.push({ name: 'get_cart_summary', params: {} });
+      drainFunctionQueue();
+      return;
+    }
+    if (goOffers.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      functionQueueRef.current.push({ name: 'show_offers', params: {} });
+      drainFunctionQueue();
+      return;
+    }
+    if (goHome.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      functionQueueRef.current.push({ name: 'navigate_to_page', params: { page: 'home' } });
+      drainFunctionQueue();
+      return;
+    }
+    if (goProducts.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      functionQueueRef.current.push({ name: 'navigate_to_page', params: { page: 'prodotti' } });
+      drainFunctionQueue();
+      return;
+    }
+    // ✅ descrizione locale senza domande aggiuntive
+    if (describe.test(lower) && window.currentProductContext?.description_text) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      const name = window.currentProductContext.name || 'prodotto';
+      const textDesc = `${name}. ${window.currentProductContext.description_text}`.slice(0, 900);
+      speak(textDesc, () => {
+        setIsProcessing(false); isProcessingRef.current = false;
+        turnLockRef.current = false;
+        if (restartListeningRef.current) restartListeningRef.current();
+      }, false, { enqueue: false });
+      return;
+    }
+    // ✅ apri prodotto per nome parziale (mappa locale)
+    const m = lower.match(openByName);
+    if (m && m[1]) {
+      const partial = normalizeKey(m[1]);
+      const map = window.visibleProductsMap || {};
+      let pid = null;
+      if (map[partial]) pid = map[partial];
+      else {
+        for (const k of Object.keys(map)) { if (k.includes(partial)) { pid = map[k]; break; } }
+      }
+      if (pid) {
+        turnLockRef.current = true;
+        setIsProcessing(true); isProcessingRef.current = true;
+        functionQueueRef.current.push({ name: 'get_product_details', params: { product_id: pid } });
+        drainFunctionQueue();
+        return;
+      }
+    }
+    if (readCart.test(lower)) {
+      turnLockRef.current = true;
+      setIsProcessing(true); isProcessingRef.current = true;
+      const summary = buildCartSpeechSummary(5);
+      speak(summary, () => {
+        setIsProcessing(false);
+        isProcessingRef.current = false;
+        if (restartListeningRef.current) restartListeningRef.current();
+      }, false, { enqueue: false });
+      return;
+    }
+    if (/(ciao|grazie.*|basta|chiudi|puoi andare|stop|non.*altro)/i.test(lower)) {
+      speak("Perfetto, alla prossima!", () => stopAssistant());
+      return;
+    }
+
+    setMessages(prev => [...prev, { type: 'user', text, timestamp: new Date().toISOString() }]);
     
     setTranscript('');
     
@@ -980,7 +1424,9 @@ export const useVoiceAssistantNative = () => {
         session_id: sessionIdRef.current,
         timestamp: new Date().toISOString(),
         current_page: window.location.pathname,
-        cart_count: useStore.getState().cartCount,
+        cart_count: (window.cartSnapshot?.length ?? useStore.getState().cartCount),
+        cart: (window.cartSnapshot || []),
+        cart_items_map: (window.cartItemsMap || {}),
         preferences: useStore.getState().preferences,
         session_count: sessionCount,
         // 🔊 nuovo contesto UI
@@ -993,7 +1439,7 @@ export const useVoiceAssistantNative = () => {
         }
       }
     });
-  }, [sendMessage, sessionCount]);
+  }, [sendMessage, sessionCount, speak, stopAssistant]);
 
   // ✅ TOGGLE LISTENING
   const toggleListening = useCallback(async () => {
@@ -1020,9 +1466,22 @@ export const useVoiceAssistantNative = () => {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
 
-        // Parla prima, poi l'ascolto ripartirà da speak().onend
+        // Parla prima, poi riapri il mic in onend (evita di catturare l'earcon)
         const welcomeMsg = getWelcomeMessage();
-        speak(welcomeMsg, undefined, true);
+        speak(welcomeMsg, () => {
+          setTimeout(() => {
+            if (
+              isAssistantActiveRef.current &&
+              !isProcessingRef.current &&
+              !isExecutingFunctionRef.current &&
+              !window.speechSynthesis.speaking
+            ) {
+              if (restartListeningRef.current) restartListeningRef.current();
+            }
+          }, 250);
+        }, true, { enqueue: false });
+        // non tenere il lock all'avvio
+        turnLockRef.current = false;
       } catch (error) {
         console.error('Microphone error:', error);
         setError('Permessi microfono negati');

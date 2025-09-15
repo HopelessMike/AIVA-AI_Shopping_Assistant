@@ -2,7 +2,7 @@
 # Version: 2.0.0 - Italian Fashion E-commerce with WebSocket Streaming
 # Security-First FastAPI Implementation with Real-time Voice Support
 
-from fastapi import FastAPI, HTTPException, Request, Depends, status, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Depends, status, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -249,6 +249,13 @@ class Cart(BaseModel):
     discount_applied: float = 0.0
     shipping: float = 0.0
     grand_total: float = 0.0
+# Request models
+class AddToCartRequest(BaseModel):
+    product_id: str
+    size: str
+    color: str
+    quantity: int = 1
+
 
 class VoiceRequest(BaseModel):
     text: str = Field(max_length=500)
@@ -1560,7 +1567,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "session_id": session_id,
                     "preferences": manager.user_sessions[session_id]["preferences"],
                     "current_page": data_store.current_page,
-                    "cart_count": data_store.cart.item_count,
+                    "cart_count": (len(client_ctx.get("cart", [])) if isinstance(client_ctx.get("cart"), list) else data_store.cart.item_count),
+                    "cart": client_ctx.get("cart", []),
+                    "cart_items_map": client_ctx.get("cart_items_map", {}),
                     "current_product": current_product_details,
                     "visible_products": visible_products_details,
                     "visible_products_map": visible_products_map,
@@ -1651,22 +1660,17 @@ async def get_cart():
     return data_store.cart
 
 @app.post("/api/cart/items")
-async def add_to_cart(
-    product_id: str,
-    size: str,
-    color: str,
-    quantity: int = 1
-):
+async def add_to_cart(req: AddToCartRequest = Body(...)):
     """Add item to cart with specific variant"""
-    if quantity < 1 or quantity > 10:
+    if req.quantity < 1 or req.quantity > 10:
         raise HTTPException(status_code=400, detail="Quantità deve essere tra 1 e 10")
     
-    cart_item = data_store.add_to_cart(product_id, size, color, quantity)
+    cart_item = data_store.add_to_cart(req.product_id, req.size, req.color, req.quantity)
     return {
         "success": True,
         "item": cart_item,
         "cart_total": data_store.cart.grand_total,
-        "message": f"Aggiunto al carrello: {cart_item.product.name} - Taglia {size} - {color}"
+        "message": f"Aggiunto al carrello: {cart_item.product.name} - Taglia {req.size} - {req.color}"
     }
 
 @app.delete("/api/cart/items/{item_id}")

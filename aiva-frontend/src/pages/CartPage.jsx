@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShoppingCart, Plus, Minus, Trash2, CreditCard, Truck, ArrowRight } from 'lucide-react';
 import { useCart } from '../hooks/useCart';
+import { publishCartSnapshot } from '../hooks/useCart';
+import { useNavigate } from 'react-router-dom';
 
 const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
+  const navigate = useNavigate();
   const [isRemoving, setIsRemoving] = useState(false);
 
   const handleRemove = () => {
@@ -24,7 +27,12 @@ const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
       transition={{ duration: 0.3 }}
     >
       <div className="flex items-center gap-4">
-        <div className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden">
+        <div
+          className="w-20 h-20 bg-gray-100 rounded-lg overflow-hidden cursor-pointer"
+          onClick={() => { if (item?.product?.id) navigate(`/products/${item.product.id}`); }}
+          title="Vai alla pagina prodotto"
+          role="button"
+        >
           <img
             src={item.product?.images?.[0] || item.product?.image}
             alt={item.product?.name}
@@ -77,7 +85,15 @@ const CartItem = ({ item, onUpdateQuantity, onRemove }) => {
 };
 
 const CartPage = () => {
+  const navigate = useNavigate();
   const { cart, cartTotal, cartCount, shipping, updateQuantity, removeFromCart, clearCart } = useCart();
+
+  // Rinforza la pubblicazione dello snapshot quando si atterra su /cart
+  useEffect(() => {
+    if (Array.isArray(cart)) {
+      publishCartSnapshot(cart);
+    }
+  }, [cart]);
 
   const subtotal = cartTotal;
   const total = cartTotal + shipping;
@@ -100,6 +116,7 @@ const CartPage = () => {
             </p>
             <motion.button
               className="px-8 py-4 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700"
+              onClick={() => navigate('/products')}
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >

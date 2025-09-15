@@ -21,7 +21,7 @@ const Navigation = ({ currentPage, onNavigate, cartItemsCount, isListening, onVo
       <div className="nav-container">
         <div className="nav-brand">
           <span className="brand-icon">🛍️</span>
-          <span className="brand-text">AIVA Fashion</span>
+          <span className="brand-text">AIVA Shopping</span>
         </div>
 
         <button 

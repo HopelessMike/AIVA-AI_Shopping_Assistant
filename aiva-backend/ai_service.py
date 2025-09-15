@@ -419,16 +419,23 @@ class SecureAIService:
             yield {"type": "complete", "message": None}
             return
 
-        # 1) Leggi descrizione del prodotto in vista
-        if cp and any(k in text_lower for k in ["descrizione", "leggi la descrizione", "leggimi la descrizione"]):
+        # Intent rapidi: "prodotti", "catalogo", "tutti i prodotti"
+        if any(k in text_lower for k in ["tutti i prodotti", "catalogo"]) or text_lower.strip() in ["prodotti"]:
+            yield {"type": "function_complete", "function": "navigate_to_page", "parameters": {"page": "prodotti"}}
+            yield {"type": "complete", "message": None}
+            return
+
+        # 1) Descrizione prodotto: risposta unica, senza streaming e senza domande finali
+        if cp and any(k in text_lower for k in [
+            "descrizione", "leggi la descrizione", "leggimi la descrizione",
+            "dettagli", "più dettagli", "più informazioni", "info prodotto"
+        ]):
             from app import data_store
             prod = data_store.get_product_by_id(cp["id"])
             if prod:
-                yield {"type": "stream_start"}
-                yield {"type": "text_chunk", "content": f"Ecco la descrizione di {prod.name}: "}
-                yield {"type": "text_chunk", "content": prod.description_long[:800]}
-                yield {"type": "stream_complete"}
-                yield {"type": "complete", "message": "Vuoi dettagli su taglie, materiali o disponibilità?"}
+                desc = f"{prod.name}. {prod.description_long[:900]}".strip()
+                yield {"type": "response", "message": desc}
+                yield {"type": "complete", "message": None}
                 return
 
         # 2) “Che prodotto sto guardando?”
@@ -548,6 +555,7 @@ class SecureAIService:
             function_args = ""
             response_text = ""
             
+            emitted_text = False
             async for chunk in stream:
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if not delta:
@@ -573,6 +581,7 @@ class SecureAIService:
                         "type": "text_chunk",
                         "content": delta.content
                     }
+                    emitted_text = True
             
             # Process complete function call
             if function_name:
@@ -636,6 +645,10 @@ class SecureAIService:
                         "message": "Ho avuto un problema. Puoi ripetere?"
                     }
             
+            # Chiudi lo stream se presenti chunk e non ci sono function
+            if emitted_text and not function_name:
+                yield {"type": "stream_complete"}
+
             # Complete response
             yield {
                 "type": "complete",

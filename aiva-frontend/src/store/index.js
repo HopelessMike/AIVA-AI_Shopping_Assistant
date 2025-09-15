@@ -4,6 +4,36 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 
+// Helpers per integrazione Voce ⇄ Carrello
+const normalizeKey = (s) =>
+  (s || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+const publishCartSnapshot = (cart) => {
+  if (typeof window === 'undefined') return;
+  const snapshot = (cart || []).map((item) => ({
+    item_id: item.id,
+    product_id: item.product?.id,
+    name: item.product?.name,
+    size: item.size,
+    color: item.color,
+    quantity: item.quantity,
+    price: item.product?.price,
+  }));
+  const map = {};
+  for (const it of snapshot) {
+    const key = normalizeKey(`${it.name} ${it.size || ''} ${it.color || ''}`);
+    if (key) map[key] = it.item_id;
+  }
+  window.cartSnapshot = snapshot;
+  window.cartItemsMap = map;
+};
+
 const useStore = create(
   devtools(
     persist(
@@ -84,6 +114,8 @@ const useStore = create(
               0
             );
             
+            // Pubblica mappa per comandi vocali (rimozione per nome/taglia/colore)
+            publishCartSnapshot(newCart);
             return { cart: newCart, cartTotal, cartCount };
           });
         },
@@ -99,12 +131,15 @@ const useStore = create(
               (count, item) => count + item.quantity,
               0
             );
-            
+            publishCartSnapshot(newCart);
             return { cart: newCart, cartTotal, cartCount };
           });
         },
         
-        clearCart: () => set({ cart: [], cartTotal: 0, cartCount: 0 }),
+        clearCart: () => {
+          set({ cart: [], cartTotal: 0, cartCount: 0 });
+          publishCartSnapshot([]);
+        },
         
         updateQuantity: (itemId, quantity) => {
           if (quantity <= 0) {
@@ -124,9 +159,20 @@ const useStore = create(
               (count, item) => count + item.quantity,
               0
             );
-            
+            publishCartSnapshot(newCart);
             return { cart: newCart, cartTotal, cartCount };
           });
+        },
+        
+        // ✅ Sync forte dal backend (/api/cart)
+        setCartFromServer: (serverCart) => {
+          const items = Array.isArray(serverCart?.items) ? serverCart.items : [];
+          set({
+            cart: items,
+            cartTotal: serverCart?.grand_total ?? serverCart?.total ?? 0,
+            cartCount: serverCart?.item_count ?? items.reduce((n, it) => n + (it.quantity || 0), 0),
+          });
+          publishCartSnapshot(items);
         },
         
         // ✅ PREFERENCE ACTIONS

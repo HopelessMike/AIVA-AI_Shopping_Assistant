@@ -5,6 +5,77 @@ import axios from 'axios';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
+// Helpers per snapshot carrello
+export function normalizeKey(s) {
+  return (s || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Helper: sincronizza dallo stato canonico del server
+async function syncCartFromServer() {
+  try {
+    const res = await axios.get(`${BACKEND_URL}/api/cart`);
+    // Aggiorna lo store globale con il payload del backend
+    const setCartFromServer = useStore.getState().setCartFromServer;
+    if (typeof setCartFromServer === 'function') {
+      setCartFromServer(res.data);
+    }
+  } catch (e) {
+    console.warn('Cart sync from server failed:', e?.message || e);
+  }
+}
+export function publishCartSnapshot(cart) {
+  try {
+    const snapshot = (cart || []).map(item => ({
+      item_id: item.id,
+      product_id: item.product?.id,
+      name: item.product?.name,
+      size: item.size,
+      color: item.color,
+      quantity: item.quantity,
+      price: item.product?.price
+    }));
+
+    const map = {};
+    for (const it of snapshot) {
+      const key = normalizeKey(`${it.name} ${it.size || ''} ${it.color || ''}`);
+      if (key) map[key] = it.item_id;
+    }
+
+    window.cartSnapshot = snapshot;
+    window.cartItemsMap = map;
+    window.dispatchEvent(new CustomEvent('aiva-cart-changed', { detail: snapshot }));
+  } catch {}
+}
+
+// ✅ Helper: riassunto vocale del carrello
+export function buildCartSpeechSummary(limit = 5) {
+  try {
+    const state = useStore.getState();
+    const items = Array.isArray(state.cart) ? state.cart : [];
+    if (items.length === 0) return 'Il carrello è vuoto.';
+    const parts = [];
+    for (let i = 0; i < Math.min(items.length, limit); i++) {
+      const it = items[i];
+      const name = it?.product?.name || 'prodotto';
+      const qty = it?.quantity || 1;
+      const size = it?.size ? `, taglia ${it.size}` : '';
+      const color = it?.color ? `, ${it.color}` : '';
+      parts.push(`${qty} x ${name}${size}${color}`);
+    }
+    const rest = items.length - Math.min(items.length, limit);
+    const tail = rest > 0 ? `, e altri ${rest} articoli.` : '.';
+    return `Nel carrello ci sono: ${parts.join('. ')}${tail}`;
+  } catch {
+    return 'Il carrello è vuoto.';
+  }
+}
+
 export const useCart = () => {
   const {
     cart,
@@ -31,6 +102,11 @@ export const useCart = () => {
     }
   }, [cartTotal, cartCount]);
   
+  // Pubblica snapshot ad ogni cambio carrello
+  useEffect(() => {
+    publishCartSnapshot(cart);
+  }, [cart]);
+
   // Add item to cart with variant selection
   const addToCart = useCallback(async (product, size, color, quantity = 1) => {
     try {
@@ -49,16 +125,19 @@ export const useCart = () => {
         throw new Error('Variante non disponibile');
       }
       
-      // Add to local store
+      // Aggiornamento ottimistico locale
       storeAddToCart(product, size, color, quantity);
-      
-      // Sync with backend
+      publishCartSnapshot(useStore.getState().cart);
+
+      // Backend: add
       await axios.post(`${BACKEND_URL}/api/cart/items`, {
         product_id: product.id,
         size,
         color,
         quantity
       });
+      // Riallinea lo store allo stato server
+      await syncCartFromServer();
       
       return true;
     } catch (err) {
@@ -76,11 +155,13 @@ export const useCart = () => {
       setLoading(true);
       setError(null);
       
-      // Remove from local store
+      // Ottimistico locale
       storeRemoveFromCart(itemId);
-      
-      // Sync with backend
+      publishCartSnapshot(useStore.getState().cart);
+      // Backend: remove
       await axios.delete(`${BACKEND_URL}/api/cart/items/${itemId}`);
+      // Sync forte dal server
+      await syncCartFromServer();
       
       return true;
     } catch (err) {
@@ -122,6 +203,7 @@ export const useCart = () => {
       for (const item of itemsToRemove) {
         storeRemoveFromCart(item.id);
       }
+      publishCartSnapshot(useStore.getState().cart);
       
       // Sync with backend
       await axios.post(`${BACKEND_URL}/api/cart/remove-category`, {
@@ -148,13 +230,15 @@ export const useCart = () => {
       setLoading(true);
       setError(null);
       
-      // Update local store
+      // Ottimistico locale
       storeUpdateQuantity(itemId, quantity);
-      
-      // Sync with backend
+      publishCartSnapshot(useStore.getState().cart);
+      // Backend: update qty
       await axios.put(`${BACKEND_URL}/api/cart/items/${itemId}`, {
         quantity
       });
+      // Sync forte dal server
+      await syncCartFromServer();
       
       return true;
     } catch (err) {
@@ -199,11 +283,13 @@ export const useCart = () => {
       setLoading(true);
       setError(null);
       
-      // Clear local store
+      // Clear locale per reattività
       storeClearCart();
-      
-      // Sync with backend
+      publishCartSnapshot(useStore.getState().cart);
+      // Backend: clear
       await axios.post(`${BACKEND_URL}/api/cart/clear`);
+      // Sync forte dal server (dovrebbe risultare vuoto)
+      await syncCartFromServer();
       
       return true;
     } catch (err) {
@@ -256,7 +342,10 @@ export const useCart = () => {
     const syncCart = async () => {
       try {
         const response = await axios.get(`${BACKEND_URL}/api/cart`);
-        // You could sync the backend cart with local store here if needed
+        const setCartFromServer = useStore.getState().setCartFromServer;
+        if (typeof setCartFromServer === 'function') {
+          setCartFromServer(response.data);
+        }
       } catch (err) {
         console.error('Failed to sync cart:', err);
       }

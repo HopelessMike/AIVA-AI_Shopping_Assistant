@@ -64,11 +64,11 @@ const OfferCard = ({ offer, onAddToCart }) => {
         <div className="flex items-center justify-between">
           <div>
             <span className="text-sm text-gray-400 line-through mr-2">
-              €{offer.originalPrice}
+              €{Number(offer.originalPrice ?? 0).toFixed(2)}
             </span>
-            <span className="text-xl font-bold text-red-600">€{offer.price}</span>
+            <span className="text-xl font-bold text-red-600">€{Number(offer.price ?? 0).toFixed(2)}</span>
             <div className="text-xs text-green-600 font-semibold">
-              Risparmi €{(offer.originalPrice - offer.price).toFixed(2)}
+              Risparmi €{(Number(offer.originalPrice ?? 0) - Number(offer.price ?? 0)).toFixed(2)}
             </div>
           </div>
           <motion.button

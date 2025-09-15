@@ -183,7 +183,7 @@ const HomePage = ({ onVoiceToggle }) => {
             </p>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-12">
+          <div className="grid md:grid-cols-3 gap-12">
             {/* Feature 1 */}
             <motion.div
               className="text-center p-8 bg-white/70 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300"
@@ -194,7 +194,7 @@ const HomePage = ({ onVoiceToggle }) => {
               </div>
               <h3 className="text-2xl font-bold text-gray-800 mb-4">Comandi Vocali</h3>
               <p className="text-gray-600 text-lg">
-                Parla naturalmente in italiano per cercare e acquistare prodotti
+                Cerca, filtra, apri le pagine e aggiungi al carrello con la voce
               </p>
             </motion.div>
 
@@ -206,9 +206,23 @@ const HomePage = ({ onVoiceToggle }) => {
               <div className="w-20 h-20 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Sparkles size={40} className="text-white" />
               </div>
-              <h3 className="text-2xl font-bold text-gray-800 mb-4">AI Intelligente</h3>
+              <h3 className="text-2xl font-bold text-gray-800 mb-4">Risposte in Tempo Reale</h3>
               <p className="text-gray-600 text-lg">
-                AIVA capisce le tue preferenze e suggerisce outfit perfetti
+                AIVA parla mentre elabora: risposte fluide e naturali, anche interruttibili
+              </p>
+            </motion.div>
+
+            {/* Feature 3 */}
+            <motion.div
+              className="text-center p-8 bg-white/70 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300"
+              whileHover={{ y: -5 }}
+            >
+              <div className="w-20 h-20 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Zap size={40} className="text-white" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-4">Navigazione Istantanea</h3>
+              <p className="text-gray-600 text-lg">
+                Vai a Prodotti, Offerte o Carrello senza toccare lo schermo: basta dirlo
               </p>
             </motion.div>
           </div>
