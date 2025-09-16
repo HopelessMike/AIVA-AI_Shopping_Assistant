@@ -1,209 +1,103 @@
 // src/services/api.js - API Service for Backend Integration
-import axios from 'axios';
-
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
-
-// Create axios instance with default config
-const api = axios.create({
-  baseURL: BACKEND_URL,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
-
-// Request interceptor for logging
-api.interceptors.request.use(
-  (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
-    return config;
-  },
-  (error) => {
-    console.error('API Request Error:', error);
-    return Promise.reject(error);
-  }
-);
-
-// Response interceptor for error handling
-api.interceptors.response.use(
-  (response) => {
-    console.log(`API Response: ${response.status} ${response.config.url}`);
-    return response;
-  },
-  (error) => {
-    console.error('API Response Error:', error.response?.data || error.message);
-    // Don't throw error for network issues, return empty data instead
-    if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
-      console.warn('Backend not available, using mock data');
-      return { data: [] };
-    }
-    return Promise.reject(error);
-  }
-);
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL ||
+  (typeof window !== 'undefined' && window.__API_BASE__) ||
+  'http://localhost:8000/api';
 
 // Product API
 export const productAPI = {
-  // Get all products with optional filters
-  getProducts: async (params = {}) => {
-    try {
-      const response = await api.get('/api/products', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching products:', error);
-      // Return mock data if backend is not available
-      if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
-        return getMockProducts();
-      }
-      throw error;
-    }
+  async getProducts(params = {}) {
+    const qs = new URLSearchParams(params);
+    const res = await fetch(`${API_BASE}/products?${qs.toString()}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`GET /products ${res.status}`);
+    return res.json();
   },
 
-  // Get size from product details
-  getSizeGuide: async (category) => {
-    const response = await api.get(`/api/size-guide/${encodeURIComponent(category)}`);
-    return response.data;
+  async getSizeGuide(category) {
+    const res = await fetch(`${API_BASE}/size-guide/${encodeURIComponent(category)}`);
+    if (!res.ok) throw new Error(`GET /size-guide ${res.status}`);
+    return res.json();
   },
 
-  // Get single product by ID
-  getProduct: async (productId) => {
-    try {
-      const response = await api.get(`/api/products/${productId}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching product:', error);
-      if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
-        return getMockProduct(productId);
-      }
-      throw error;
-    }
+  async getProduct(id) {
+    const res = await fetch(`${API_BASE}/products/${id}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`GET /products/${id} ${res.status}`);
+    return res.json();
   },
 
-  // Check product availability
-  checkAvailability: async (productId, size, color) => {
-    try {
-      const response = await api.get(`/api/products/${productId}/availability`, {
-        params: { size, color }
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error checking availability:', error);
-      // Return available by default for mock
-      return { available: true, stock: 10 };
-    }
+  async checkAvailability(productId, size, color) {
+    const qs = new URLSearchParams({ size, color });
+    const res = await fetch(`${API_BASE}/products/${productId}/availability?${qs.toString()}`);
+    if (!res.ok) throw new Error(`GET /availability ${res.status}`);
+    return res.json();
   },
 
-  // Get product recommendations
-  getRecommendations: async (params = {}) => {
-    try {
-      const response = await api.get('/api/recommendations', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching recommendations:', error);
-      if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
-        return getMockRecommendations();
-      }
-      throw error;
-    }
+  async getRecommendations(params = {}) {
+    const qs = new URLSearchParams(params);
+    const res = await fetch(`${API_BASE}/recommendations?${qs.toString()}`);
+    if (!res.ok) throw new Error(`GET /recommendations ${res.status}`);
+    return res.json();
   },
 
-  // Search products with Italian terms
-  searchProducts: async (query, filters = {}) => {
-    try {
-      const params = { q: query, ...filters };
-      const response = await api.get('/api/products', { params });
-      return response.data;
-    } catch (error) {
-      console.error('Error searching products:', error);
-      if (error.code === 'ECONNREFUSED' || error.message.includes('Network Error')) {
-        return getMockProducts().filter(product => 
-          product.name.toLowerCase().includes(query.toLowerCase()) ||
-          product.brand.toLowerCase().includes(query.toLowerCase())
-        );
-      }
-      throw error;
-    }
+  async searchProducts(query, filters = {}) {
+    const qs = new URLSearchParams({ q: query, ...filters });
+    const res = await fetch(`${API_BASE}/products?${qs.toString()}`);
+    if (!res.ok) throw new Error(`GET /products ${res.status}`);
+    return res.json();
   }
 };
 
 // Cart API
 export const cartAPI = {
-  // Get cart contents
-  getCart: async () => {
-    try {
-      const response = await api.get('/api/cart');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching cart:', error);
-      throw error;
-    }
+  async getCart() {
+    const res = await fetch(`${API_BASE}/cart`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`GET /cart ${res.status}`);
+    return res.json();
   },
 
   // Add item to cart
-  addToCart: async (productId, size, color, quantity = 1) => {
-    try {
-      const response = await api.post('/api/cart/items', {
-        product_id: productId,
-        size,
-        color,
-        quantity
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error adding to cart:', error);
-      throw error;
-    }
+  async addToCart(productId, size, color, quantity = 1) {
+    const res = await fetch(`${API_BASE}/cart/items`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: productId, size, color, quantity })
+    });
+    if (!res.ok) throw new Error(`POST /cart/items ${res.status}`);
+    return res.json();
   },
 
   // Remove item from cart
-  removeFromCart: async (itemId) => {
-    try {
-      const response = await api.delete(`/api/cart/items/${itemId}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error removing from cart:', error);
-      throw error;
-    }
+  async removeFromCart(itemId) {
+    const res = await fetch(`${API_BASE}/cart/items/${itemId}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`DELETE /cart/items ${res.status}`);
+    return res.json();
   },
 
   // Update cart item quantity
-  updateQuantity: async (itemId, quantity) => {
-    try {
-      const response = await api.put(`/api/cart/items/${itemId}`, {
-        quantity
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error updating quantity:', error);
-      throw error;
-    }
+  async updateQuantity(itemId, quantity) {
+    const res = await fetch(`${API_BASE}/cart/items/${itemId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quantity })
+    });
+    if (!res.ok) throw new Error(`PUT /cart/items ${res.status}`);
+    return res.json();
   },
 
   // Clear entire cart
-  clearCart: async () => {
-    try {
-      const response = await api.post('/api/cart/clear');
-      return response.data;
-    } catch (error) {
-      console.error('Error clearing cart:', error);
-      throw error;
-    }
+  async clearCart() {
+    const res = await fetch(`${API_BASE}/cart/clear`, { method: 'POST' });
+    if (!res.ok) throw new Error(`POST /cart/clear ${res.status}`);
+    return res.json();
   }
 };
 
 // Voice/AI API
 export const voiceAPI = {
-  // Process voice command
-  processVoiceCommand: async (text, context = {}) => {
-    try {
-      const response = await api.post('/api/voice/process', {
-        text,
-        context
-      });
-      return response.data;
-    } catch (error) {
-      console.error('Error processing voice command:', error);
-      throw error;
-    }
+  async processVoiceCommand(text, context = {}) {
+    const res = await fetch(`${API_BASE}/voice/command`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, context })
+    });
+    if (!res.ok) throw new Error(`POST /voice/command ${res.status}`);
+    return res.json();
   }
 };
 
@@ -244,10 +138,14 @@ export const infoAPI = {
 };
 
 // WebSocket connection for real-time voice
-export const createWebSocketConnection = (sessionId) => {
-  const wsUrl = `${BACKEND_URL.replace('http', 'ws')}/ws/${sessionId}`;
-  return new WebSocket(wsUrl);
-};
+export function createWebSocketConnection(sessionId) {
+  if (import.meta.env.VITE_VERCEL_MODE === 'true') {
+    throw new Error('WebSocket disabilitato in ambiente Vercel');
+  }
+  const u = new URL(API_BASE);
+  const scheme = u.protocol === 'https:' ? 'wss' : 'ws';
+  return new WebSocket(`${scheme}://${u.host}/ws/${sessionId}`);
+}
 
 // Health check
 export const healthCheck = async () => {
