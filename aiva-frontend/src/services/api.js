@@ -220,4 +220,4 @@ const getMockProduct = (productId) => {
 
 const getMockRecommendations = () => getMockProducts().slice(0, 3);
 
-export default api;
+// No default export
