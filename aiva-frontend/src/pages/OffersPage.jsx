@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { ShoppingCart, Heart, Star, Tag } from 'lucide-react';
-import { productAPI, cartAPI } from '../services/api';
+import { ShoppingCart, Heart, Star, Tag, X } from 'lucide-react';
+import { productAPI } from '../services/api';
+import { useCart } from '../hooks/useCart';
 
 const OfferCard = ({ offer, onAddToCart }) => {
   const [isHovered, setIsHovered] = useState(false);
@@ -89,6 +90,12 @@ const OffersPage = () => {
   const [offers, setOffers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { addToCart: addToCartHook } = useCart();
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);
+  const [quickAddOffer, setQuickAddOffer] = useState(null);
+  const [selectedSize, setSelectedSize] = useState('');
+  const [selectedColor, setSelectedColor] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
     const loadOffers = async () => {
@@ -159,21 +166,92 @@ const OffersPage = () => {
     return () => window.removeEventListener('offers-apply-filters', handler);
   }, []);
 
-  const handleAddToCart = async (offer) => {
-    try {
-      const defaultVariant = offer.variants?.[0];
-      if (defaultVariant) {
-        await cartAPI.addToCart(
-          offer.id,
-          defaultVariant.size,
-          defaultVariant.color,
-          1
-        );
-        console.log('Offer added to cart:', offer.name);
+  const getAvailableSizes = (offer) => {
+    const sizes = new Set();
+    (offer?.variants || []).forEach((variant) => {
+      if (variant?.available) {
+        sizes.add(variant.size);
       }
+    });
+    return Array.from(sizes);
+  };
+
+  const getAvailableColors = (offer, sizeFilter = null) => {
+    const colors = new Set();
+    (offer?.variants || []).forEach((variant) => {
+      if (!variant?.available) return;
+      if (sizeFilter && variant.size !== sizeFilter) return;
+      colors.add(variant.color);
+    });
+    return Array.from(colors);
+  };
+
+  const ensureValidCombination = (offer, size, color) => {
+    if (!offer || !size || !color) return false;
+    return (offer.variants || []).some(
+      (variant) =>
+        variant?.available &&
+        variant.size === size &&
+        variant.color === color
+    );
+  };
+
+  const closeQuickAdd = () => {
+    setIsQuickAddOpen(false);
+    setQuickAddOffer(null);
+    setSelectedSize('');
+    setSelectedColor('');
+    setIsAdding(false);
+  };
+
+  const openQuickAdd = (offer) => {
+    if (!offer) return;
+    setQuickAddOffer(offer);
+    const sizes = getAvailableSizes(offer);
+    const defaultSize = sizes[0] || '';
+    const colorsForSize = getAvailableColors(offer, defaultSize);
+    const fallbackColors = getAvailableColors(offer);
+    const defaultColor = colorsForSize[0] || fallbackColors[0] || '';
+    setSelectedSize(defaultSize);
+    setSelectedColor(defaultColor);
+    setIsQuickAddOpen(true);
+  };
+
+  const handleSelectSize = (size) => {
+    setSelectedSize(size);
+    if (!quickAddOffer) return;
+    const colorsForSize = getAvailableColors(quickAddOffer, size);
+    setSelectedColor((prevColor) => {
+      if (colorsForSize.includes(prevColor)) {
+        return prevColor;
+      }
+      return colorsForSize[0] || '';
+    });
+  };
+
+  const handleSelectColor = (color) => {
+    setSelectedColor(color);
+  };
+
+  const confirmAddToCart = async () => {
+    if (!quickAddOffer || !selectedSize || !selectedColor) return;
+    if (!ensureValidCombination(quickAddOffer, selectedSize, selectedColor)) return;
+
+    try {
+      setIsAdding(true);
+      const productName = quickAddOffer?.name;
+      await addToCartHook(quickAddOffer, selectedSize, selectedColor, 1);
+      closeQuickAdd();
+      console.log('Offer added to cart:', productName);
     } catch (error) {
       console.error('Error adding offer to cart:', error);
+    } finally {
+      setIsAdding(false);
     }
+  };
+
+  const handleAddToCart = (offer) => {
+    openQuickAdd(offer);
   };
 
   if (loading) {
@@ -241,6 +319,93 @@ const OffersPage = () => {
               Controlla di nuovo più tardi per nuove offerte
             </p>
           </motion.div>
+        )}
+
+        {isQuickAddOpen && quickAddOffer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/40" onClick={closeQuickAdd} />
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-6 z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="text-xl font-semibold text-gray-900">{quickAddOffer.name}</h3>
+                  <p className="text-sm text-gray-500">{quickAddOffer.brand}</p>
+                </div>
+                <button
+                  onClick={closeQuickAdd}
+                  className="p-2 rounded-full hover:bg-gray-100"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="space-y-5">
+                <div>
+                  <h4 className="text-sm font-medium text-gray-900 mb-2">Seleziona taglia</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {getAvailableSizes(quickAddOffer).map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => handleSelectSize(size)}
+                        className={`px-3 py-2 rounded-lg border text-sm font-medium ${
+                          selectedSize === size
+                            ? 'border-red-600 text-red-600 bg-red-50'
+                            : 'border-gray-300 text-gray-700 hover:border-gray-400'
+                        }`}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-sm font-medium text-gray-900 mb-2">Seleziona colore</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {getAvailableColors(quickAddOffer, selectedSize || undefined).map((color) => (
+                      <button
+                        key={color}
+                        onClick={() => handleSelectColor(color)}
+                        className={`px-3 py-2 rounded-lg border text-sm font-medium capitalize ${
+                          selectedColor === color
+                            ? 'border-red-600 text-red-600 bg-red-50'
+                            : 'border-gray-300 text-gray-700 hover:border-gray-400'
+                        }`}
+                      >
+                        {color}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    onClick={confirmAddToCart}
+                    disabled={
+                      isAdding ||
+                      !selectedSize ||
+                      !selectedColor ||
+                      !ensureValidCombination(quickAddOffer, selectedSize, selectedColor)
+                    }
+                    className="flex-1 inline-flex items-center justify-center gap-2 bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 disabled:opacity-60"
+                  >
+                    <ShoppingCart size={18} />
+                    {isAdding ? 'Aggiungo...' : 'Aggiungi al carrello'}
+                  </button>
+                  <button
+                    onClick={closeQuickAdd}
+                    className="px-4 py-3 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+                  >
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
         )}
 
         {/* Newsletter Signup */}

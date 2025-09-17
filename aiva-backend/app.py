@@ -293,6 +293,86 @@ class Cart(BaseModel):
     discount_applied: float = 0.0
     shipping: float = 0.0
     grand_total: float = 0.0
+
+
+def serialize_product_for_ai(product: Product) -> Dict[str, Any]:
+    """Return a compact snapshot with descriptive details but without stock counts."""
+
+    try:
+        available_sizes = []
+        available_colors = []
+        variant_pairs = []
+
+        for variant in product.variants:
+            pair = {
+                "size": variant.size,
+                "color": variant.color,
+                "available": variant.available,
+            }
+            variant_pairs.append(pair)
+
+            if variant.available:
+                if variant.size not in available_sizes:
+                    available_sizes.append(variant.size)
+                normalized_color = variant.color
+                if normalized_color not in available_colors:
+                    available_colors.append(normalized_color)
+
+        return {
+            "id": product.id,
+            "name": product.name,
+            "brand": product.brand,
+            "category": product.category,
+            "subcategory": product.subcategory,
+            "gender": product.gender,
+            "price": product.price,
+            "original_price": product.original_price,
+            "on_sale": product.on_sale,
+            "discount_percentage": product.discount_percentage,
+            "description": product.description,
+            "description_long": product.description_long,
+            "style": product.style,
+            "season": product.season,
+            "materials": product.materials,
+            "features": product.features,
+            "available_sizes": available_sizes,
+            "available_colors": available_colors,
+            "variants": variant_pairs,
+        }
+    except Exception:
+        # Fallback to a minimal payload if something goes wrong
+        return {
+            "id": getattr(product, "id", None),
+            "name": getattr(product, "name", ""),
+            "category": getattr(product, "category", ""),
+            "gender": getattr(product, "gender", ""),
+        }
+
+
+def sanitize_history_entries(history: Optional[List[Dict[str, Any]]], limit: int = 12) -> List[Dict[str, str]]:
+    if not history:
+        return []
+
+    sanitized: List[Dict[str, str]] = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        role = entry.get("role")
+        content = entry.get("content")
+        if role not in {"user", "assistant"}:
+            continue
+        if not content:
+            continue
+        sanitized.append({
+            "role": role,
+            "content": str(content).strip()[:800]
+        })
+
+    if len(sanitized) > limit:
+        return sanitized[-limit:]
+    return sanitized
+
+
 # Request models
 class AddToCartRequest(BaseModel):
     product_id: str
@@ -1579,20 +1659,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 if cp and isinstance(cp, dict) and cp.get("id"):
                     prod = data_store.get_product_by_id(cp["id"])
                     if prod:
-                        current_product_details = {
-                            "id": prod.id,
-                            "name": prod.name,
-                            "category": prod.category,
-                            "gender": prod.gender,
-                            "variants": [
-                                {
-                                  "size": v.size,
-                                  "color": v.color,
-                                  "available": v.available,
-                                  "stock": v.stock
-                                } for v in prod.variants
-                            ]
-                        }
+                        current_product_details = serialize_product_for_ai(prod)
 
                 # Prodotti visibili (mappa id->name per open product by name)
                 visible_products_details = []
@@ -1600,12 +1667,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     p = data_store.get_product_by_id(pid)
                     if p:
                         visible_products_details.append({
-                            "id": p.id, "name": p.name,
-                            "category": p.category, "gender": p.gender
+                            "id": p.id,
+                            "name": p.name,
+                            "category": p.category,
+                            "gender": p.gender,
+                            "price": p.price,
+                            "on_sale": p.on_sale,
+                            "discount": p.discount_percentage,
                         })
 
                 # Mappa normalizzata nome->id inviata dal client
                 visible_products_map = client_ctx.get("visible_products_map") or {}
+
+                incoming_history = client_ctx.get("history")
+                if incoming_history:
+                    sanitized_history = sanitize_history_entries(incoming_history, limit=24)
+                    manager.user_sessions[session_id]["history"] = sanitized_history
+                else:
+                    sanitized_history = manager.user_sessions[session_id].get("history", [])
 
                 context = {
                     "session_id": session_id,
@@ -1619,6 +1698,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     "visible_products_map": visible_products_map,
                     "ui_filters": client_ctx.get("ui_filters", {})
                 }
+
+                history_for_context = sanitize_history_entries(sanitized_history, limit=12)
+                if history_for_context:
+                    context["history"] = history_for_context
 
                 await manager.send_json(websocket, {
                     "type": "processing_start",
@@ -1764,28 +1847,20 @@ async def voice_command(req: VoiceRequest):
     if cp and isinstance(cp, dict) and cp.get("id"):
         prod = data_store.get_product_by_id(cp["id"])
         if prod:
-            current_product_details = {
-                "id": prod.id,
-                "name": prod.name,
-                "category": prod.category,
-                "gender": prod.gender,
-                "variants": [
-                    {
-                        "size": v.size,
-                        "color": v.color,
-                        "available": v.available,
-                        "stock": v.stock
-                    } for v in prod.variants
-                ]
-            }
+            current_product_details = serialize_product_for_ai(prod)
 
     visible_products_details = []
     for pid in (client_ctx.get("visible_products") or [])[:24]:
         p = data_store.get_product_by_id(pid)
         if p:
             visible_products_details.append({
-                "id": p.id, "name": p.name,
-                "category": p.category, "gender": p.gender
+                "id": p.id,
+                "name": p.name,
+                "category": p.category,
+                "gender": p.gender,
+                "price": p.price,
+                "on_sale": p.on_sale,
+                "discount": p.discount_percentage,
             })
 
     visible_products_map = client_ctx.get("visible_products_map") or {}
@@ -1802,6 +1877,10 @@ async def voice_command(req: VoiceRequest):
         "visible_products_map": visible_products_map,
         "ui_filters": client_ctx.get("ui_filters", {})
     }
+
+    history_payload = sanitize_history_entries(client_ctx.get("history"))
+    if history_payload:
+        context["history"] = history_payload
 
     try:
         from ai_service import process_voice_command_streaming

@@ -12,6 +12,10 @@ Modern, responsive React frontend for AIVA Fashion - an AI-powered voice shoppin
 - 🔊 **Text-to-Speech**: AI responses spoken back to the user
 - 📊 **Voice Visualizer**: Real-time audio level visualization
 - 💬 **Chat Interface**: Visual conversation history with AI
+- 🧠 **Category-aware Commands**: L'assistente riconosce richieste come "mostrami le scarpe" applicando automaticamente filtri e ricerca di categoria.
+- 📚 **Session Memory**: Gli ultimi turni vengono preservati e reinviati al backend per risposte coerenti.
+- 🗣️ **Streaming fluido**: L'audio sintetizzato ricompone le frasi, le livella nel volume e le legge senza l'effetto "token-by-token".
+- 🎙️ **Microfono sempre attivo**: Dopo ogni risposta locale (es. riepilogo carrello) il lock vocale viene rilasciato e l'assistente torna subito in ascolto.
 
 ### E-commerce Features
 - 🛍️ **Product Catalog**: 30+ fashion items with variants
@@ -20,6 +24,9 @@ Modern, responsive React frontend for AIVA Fashion - an AI-powered voice shoppin
 - 💳 **Checkout Flow**: Complete purchase process
 - ⭐ **Product Reviews**: Ratings and reviews display
 - 🏷️ **Promotions**: Discount badges and sale prices
+- 🛡️ **Persistenza Carrello**: Il carrello resta disponibile tra i refresh anche con backend stateless grazie alla sincronizzazione locale.
+- 🏷️ **Quick Add Offerte**: Le card della sezione offerte aprono il selettore di taglia e colore prima di aggiungere al carrello.
+- ➕ **Comandi multi-pezzo**: Una singola frase può aggiungere più varianti (es. "due L rosso e una S bianca") con validazione immediata.
 
 ### UI/UX Excellence
 - 📱 **Fully Responsive**: Adapts to all screen sizes
@@ -71,7 +78,7 @@ The app will open at `http://localhost:5173`
 ### Voice Features
 - **Web Speech API (ASR/TTS)** - Riconoscimento e sintesi nativi
 - **TTS Queue + Barge‑in** - Coda di frasi con chaining e interruzione RMS
-- **WebSocket** - Messaggi strutturati (response/complete, function_*). Nessun text_chunk lato UI
+- **WebSocket** - Messaggi strutturati (response/complete, function_*, stream_start/text_chunk/stream_complete) per streaming a frasi complete.
 
 ### State & Data
 - **Zustand** - State management

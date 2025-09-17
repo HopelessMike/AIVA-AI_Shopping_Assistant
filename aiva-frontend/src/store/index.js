@@ -166,13 +166,44 @@ const useStore = create(
         
         // ✅ Sync forte dal backend (/api/cart)
         setCartFromServer: (serverCart) => {
-          const items = Array.isArray(serverCart?.items) ? serverCart.items : [];
-          set({
-            cart: items,
-            cartTotal: serverCart?.grand_total ?? serverCart?.total ?? 0,
-            cartCount: serverCart?.item_count ?? items.reduce((n, it) => n + (it.quantity || 0), 0),
+          set((state) => {
+            const serverItems = Array.isArray(serverCart?.items) ? serverCart.items : [];
+            const serverCount =
+              Number(
+                serverCart?.item_count ?? serverCart?.count ?? serverCart?.total_items ?? 0
+              ) || 0;
+            const serverTotal =
+              Number(
+                serverCart?.grand_total ?? serverCart?.total ?? serverCart?.subtotal ?? 0
+              ) || 0;
+
+            const shouldUseServer =
+              serverItems.length > 0 ||
+              serverCount > 0 ||
+              serverTotal > 0 ||
+              state.cart.length === 0;
+
+            const baseCart = shouldUseServer ? serverItems : state.cart;
+            const cartTotal = shouldUseServer
+              ? serverTotal ||
+                baseCart.reduce(
+                  (total, item) => total + (item.product?.price || 0) * (item.quantity || 0),
+                  0
+                )
+              : state.cartTotal;
+            const cartCount = shouldUseServer
+              ? serverCount ||
+                baseCart.reduce((count, item) => count + (item.quantity || 0), 0)
+              : state.cartCount;
+
+            publishCartSnapshot(baseCart);
+
+            return {
+              cart: baseCart,
+              cartTotal,
+              cartCount,
+            };
           });
-          publishCartSnapshot(items);
         },
         
         // ✅ PREFERENCE ACTIONS
@@ -530,6 +561,14 @@ const useStore = create(
           preferences: state.preferences,
           voiceHistory: state.voiceHistory.slice(-20), // Persist only last 20
         }),
+        onRehydrateStorage: () => (state, error) => {
+          if (error) return;
+          try {
+            publishCartSnapshot(state?.cart || []);
+          } catch (err) {
+            console.warn('Failed to publish cart snapshot after rehydrate:', err);
+          }
+        },
       }
     ),
     {

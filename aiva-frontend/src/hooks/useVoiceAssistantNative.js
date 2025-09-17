@@ -47,6 +47,8 @@ export const useVoiceAssistantNative = () => {
   const queuedMessagesRef = useRef([]);
   const inactivityTimeoutRef = useRef(null);
   const streamBufferRef = useRef('');
+  const streamSentenceBufferRef = useRef('');
+  const streamedTurnHadSpeechRef = useRef(false);
   const isStreamingTTSRef = useRef(false);
   const streamReleasePendingRef = useRef(false);
   const utterQueueRef = useRef([]);
@@ -60,6 +62,10 @@ export const useVoiceAssistantNative = () => {
   const lastUserTextRef = useRef('');
   const isRestartingRef = useRef(false); // ✅ NUOVO: Previene riavvii multipli
   const selectedVoiceRef = useRef(null); // ✅ NUOVO: Memorizza la voce selezionata
+  const conversationHistoryRef = useRef([]);
+  const assistantTurnBufferRef = useRef('');
+  const lastAssistantHistoryRef = useRef('');
+  const MAX_HISTORY_ENTRIES = 20;
   // 🔊 Barge-in RMS
   const bargeInCtxRef = useRef(null);
   const bargeInStreamRef = useRef(null);
@@ -258,45 +264,47 @@ export const useVoiceAssistantNative = () => {
   const INTERACTION_CHECK_INTERVAL = 15000; // Check every 10 seconds
 
   // Welcome messages
-const getWelcomeMessage = useCallback(() => {
-  const welcomeMessages = [
-    // --- Set 1: Chiare e dirette ---
-    "Ciao! Sono AIVA, la tua personal shopper AI. Come posso aiutarti oggi?",
-    "Benvenuto. Sono AIVA, qui per aiutarti a navigare tra le nostre collezioni. Cerchi ispirazione o hai già un'idea precisa?",
-    "Ciao! Sono AIVA, l'assistente AI pronta a trasformare la tua esperienza di shopping. Cosa posso fare per te?",
+  const getWelcomeMessage = useCallback(() => {
+    const welcomeMessages = [
+      // --- Set 1: Chiare e dirette ---
+      "Ciao! Sono AIVA, la tua personal shopper AI. Come posso aiutarti oggi?",
+      "Benvenuto. Sono AIVA, qui per aiutarti a navigare tra le nostre collezioni. Cerchi ispirazione o hai già un'idea precisa?",
+      "Ciao! Sono AIVA, l'assistente AI pronta a trasformare la tua esperienza di shopping. Cosa posso fare per te?",
 
-    // --- Set 2: Creative e ispirazionali ---
-    "Benvenuto nel nostro ecommerce. Sono AIVA, la tua personal shopper AI. Quali prodotti ti piacerebbe vedere?",
-    "Sono AIVA, la tua assistente allo shopping. Insieme possiamo scoprire le nuove collezioni o trovare esattamente ciò che desideri. Da dove vogliamo cominciare?",
+      // --- Set 2: Creative e ispirazionali ---
+      "Benvenuto nel nostro ecommerce. Sono AIVA, la tua personal shopper AI. Quali prodotti ti piacerebbe vedere?",
+      "Sono AIVA, la tua assistente allo shopping. Insieme possiamo scoprire le nuove collezioni o trovare esattamente ciò che desideri. Da dove vogliamo cominciare?",
 
-    // --- Set 3: Guidate e interattive ---
-    "Benvenuto! Sono AIVA e sono qui per aiutarti a trovare l'outfit perfetto. Puoi dirmi cosa cerchi oppure chiedermi di mostrarti le ultime offerte."
-  ];
+      // --- Set 3: Guidate e interattive ---
+      "Benvenuto! Sono AIVA e sono qui per aiutarti a trovare l'outfit perfetto. Puoi dirmi cosa cerchi oppure chiedermi di mostrarti le ultime offerte."
+    ];
 
-  const shortMessages = [
-    // --- Set 1: Rapide e dirette ---
-    "Eccomi di nuovo.",
-    "Rieccomi.",
-    "Bentornato.",
-    "Sono di nuovo qui. Dimmi pure.",
+    const shortMessages = [
+      // --- Set 1: Rapide e dirette ---
+      "Eccomi di nuovo.",
+      "Rieccomi.",
+      "Bentornato.",
+      "Sono di nuovo qui. Dimmi pure.",
 
-    // --- Set 2: Contestuali e propositive ---
-    "Pronta a continuare. Hai trovato qualcosa che ti piace o cerchiamo altro?",
+      // --- Set 2: Contestuali e propositive ---
+      "Pronta a continuare. Hai trovato qualcosa che ti piace o cerchiamo altro?",
 
-    // --- Set 3: Amichevoli e concise ---
-    "Ok, continuiamo. Cosa facciamo ora?",
-    "Pronti a ripartire. Ti ascolto."
-  ];
+      // --- Set 3: Amichevoli e concise ---
+      "Ok, continuiamo. Cosa facciamo ora?",
+      "Pronti a ripartire. Ti ascolto."
+    ];
 
-  // Logic to select and return a message would go here...
-});
-    
+    const pickRandom = (messages) => {
+      if (!messages || messages.length === 0) return '';
+      return messages[Math.floor(Math.random() * messages.length)] || '';
+    };
+
     if (sessionCount === 0) {
       setSessionCount(1);
-      return welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)];
-    } else {
-      return shortMessages[Math.floor(Math.random() * shortMessages.length)];
+      return pickRandom(welcomeMessages);
     }
+
+    return pickRandom(shortMessages);
   }, [sessionCount]);
 
   // Browser support check
@@ -392,6 +400,21 @@ const getWelcomeMessage = useCallback(() => {
     const parts = (text || '').split(/(?<=[\.!?])\s+/).map(s => s.trim()).filter(Boolean);
     return parts.length ? parts : [(text || '').trim()].filter(Boolean);
   }, []);
+
+  const pushHistoryEntry = useCallback((role, content) => {
+    const clean = (content || '').trim();
+    if (!clean) return;
+    const next = [...conversationHistoryRef.current, { role, content: clean }];
+    conversationHistoryRef.current = next.slice(-MAX_HISTORY_ENTRIES);
+  }, []);
+
+  const pushUserHistory = useCallback((text) => {
+    pushHistoryEntry('user', text);
+  }, [pushHistoryEntry]);
+
+  const pushAssistantHistory = useCallback((text) => {
+    pushHistoryEntry('assistant', text);
+  }, [pushHistoryEntry]);
 
   // ✅ RILASCIO TURNO SICURO post TTS
   const releaseTurnIfIdle = useCallback(() => {
@@ -1087,7 +1110,9 @@ const getWelcomeMessage = useCallback(() => {
     // ✅ svuota coda TTS e timer safety
     utterQueueRef.current = [];
     if (ttsSafetyTimerRef.current) { clearTimeout(ttsSafetyTimerRef.current); ttsSafetyTimerRef.current = null; }
-    
+    streamSentenceBufferRef.current = '';
+    streamedTurnHadSpeechRef.current = false;
+
     // Clear timeouts
     if (inactivityTimeoutRef.current) { clearTimeout(inactivityTimeoutRef.current); inactivityTimeoutRef.current = null; }
     clearListeningTimers();          // ⬅️ importante
@@ -1108,7 +1133,10 @@ const getWelcomeMessage = useCallback(() => {
     // Allinea subito i flag di processing
     setIsProcessing(false);
     isProcessingRef.current = false;
-    
+    conversationHistoryRef.current = [];
+    assistantTurnBufferRef.current = '';
+    lastAssistantHistoryRef.current = '';
+
     console.log('✅ Assistant stopped');
   }, []);
 
@@ -1320,6 +1348,33 @@ const getWelcomeMessage = useCallback(() => {
     } catch {}
   }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle]);
 
+  const flushStreamedSpeech = useCallback((force = false) => {
+    const raw = (streamSentenceBufferRef.current || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return false;
+
+    const sentences = segmentTextIntoSentences(raw);
+    if (!sentences.length) return false;
+
+    const pending = [];
+    let spoke = false;
+
+    sentences.forEach((sentence, idx) => {
+      const trimmed = sentence.trim();
+      if (!trimmed) return;
+      const hasTerminator = /[\.!?…:]\s*$/.test(trimmed);
+      if (force || hasTerminator || trimmed.length > 160) {
+        speak(trimmed, () => {}, false, { enqueue: true });
+        spoke = true;
+        streamedTurnHadSpeechRef.current = true;
+      } else {
+        pending.push(trimmed);
+      }
+    });
+
+    streamSentenceBufferRef.current = pending.join(' ');
+    return spoke;
+  }, [segmentTextIntoSentences, speak]);
+
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback((data) => {
     // ⛔ se non sono attivo, ignora il messaggio
@@ -1342,6 +1397,10 @@ const getWelcomeMessage = useCallback(() => {
         safeStopRecognition(); // mic OFF
         // prepara buffer per eventuale stream
         streamBufferRef.current = '';
+        streamSentenceBufferRef.current = '';
+        streamedTurnHadSpeechRef.current = false;
+        assistantTurnBufferRef.current = '';
+        lastAssistantHistoryRef.current = '';
         dropStaleResponsesRef.current = false; // ✅ da qui ricominciamo ad accettare messaggi
         break;
       }
@@ -1354,32 +1413,40 @@ const getWelcomeMessage = useCallback(() => {
       case 'stream_start': {
         // Disabilita parlato chunk-by-chunk: bufferizza soltanto
         streamBufferRef.current = '';
+        streamSentenceBufferRef.current = '';
+        streamedTurnHadSpeechRef.current = false;
+        assistantTurnBufferRef.current = '';
         isStreamingTTSRef.current = true;
         streamReleasePendingRef.current = false;
         break;
       }
 
       case 'text_chunk': {
-        // Niente TTS qui: accumula e parleremo al stream_complete
         if (typeof data.content === 'string') {
-          streamBufferRef.current += (data.content || '') + ' ';
+          const raw = (data.content || '').trim();
+          if (raw) {
+            assistantTurnBufferRef.current = `${assistantTurnBufferRef.current} ${raw}`.trim();
+            streamBufferRef.current = `${streamBufferRef.current} ${raw}`.trim();
+            streamSentenceBufferRef.current = `${streamSentenceBufferRef.current} ${raw}`.trim();
+            const spoke = flushStreamedSpeech(false);
+            if (spoke) {
+              processingOwnedBySpeechRef.current = true;
+            }
+          }
         }
         break;
       }
 
       case 'stream_complete': {
-        // Parla una sola volta il buffer
-        isStreamingTTSRef.current = false;
-        const text = sanitizeTextForTTS(streamBufferRef.current.trim());
-        streamBufferRef.current = '';
-        if (text) {
+        const spoke = flushStreamedSpeech(true);
+        if (spoke) {
           processingOwnedBySpeechRef.current = true;
-          speak(text, () => {
-            setIsProcessing(false);
-            isProcessingRef.current = false;
-            releaseTurnIfIdle();
-          }, false, { enqueue: false });
-        } else {
+        }
+        isStreamingTTSRef.current = false;
+        streamReleasePendingRef.current = true;
+        streamBufferRef.current = '';
+        streamSentenceBufferRef.current = '';
+        if (!window.speechSynthesis.speaking && utterQueueRef.current.length === 0) {
           setIsProcessing(false);
           isProcessingRef.current = false;
           releaseTurnIfIdle();
@@ -1425,27 +1492,62 @@ const getWelcomeMessage = useCallback(() => {
 
       case 'response': {
         if (data.message) {
-          setIsProcessing(true);
-          isProcessingRef.current = true;
-          processingOwnedBySpeechRef.current = true;
-          speak(data.message, () => {
-            setIsProcessing(false);
-            isProcessingRef.current = false;
-            releaseTurnIfIdle();
-          }, false, { enqueue: false });
+          const finalText = (data.message || '').trim();
+          if (finalText) {
+            if (!assistantTurnBufferRef.current) {
+              assistantTurnBufferRef.current = finalText;
+            }
+            const historyText = data.streamed ? assistantTurnBufferRef.current : finalText;
+            if (historyText && lastAssistantHistoryRef.current !== historyText) {
+              pushAssistantHistory(historyText);
+              lastAssistantHistoryRef.current = historyText;
+            }
+
+            if (!data.streamed) {
+              setIsProcessing(true);
+              isProcessingRef.current = true;
+              processingOwnedBySpeechRef.current = true;
+              speak(finalText, () => {
+                setIsProcessing(false);
+                isProcessingRef.current = false;
+                releaseTurnIfIdle();
+              }, false, { enqueue: false });
+            } else {
+              const spoke = flushStreamedSpeech(true);
+              if (spoke) {
+                processingOwnedBySpeechRef.current = true;
+              }
+            }
+          }
         }
         break;
       }
 
       case 'complete': {
+        const spoke = flushStreamedSpeech(true);
+        if (spoke) {
+          processingOwnedBySpeechRef.current = true;
+        }
         // Se il server ha inviato stream chunks ma non message, il buffer è stato già parlato su stream_complete
         if (data.message) {
-          processingOwnedBySpeechRef.current = true;
-          speak(data.message, () => {
-            setIsProcessing(false);
-            isProcessingRef.current = false;
-            releaseTurnIfIdle();
-          }, false, { enqueue: false });
+          const finalText = (data.message || '').trim();
+          if (finalText) {
+            if (!assistantTurnBufferRef.current) {
+              assistantTurnBufferRef.current = finalText;
+            }
+            if (lastAssistantHistoryRef.current !== finalText) {
+              pushAssistantHistory(finalText);
+              lastAssistantHistoryRef.current = finalText;
+            }
+            if (!streamedTurnHadSpeechRef.current && !data.streamed) {
+              processingOwnedBySpeechRef.current = true;
+              speak(finalText, () => {
+                setIsProcessing(false);
+                isProcessingRef.current = false;
+                releaseTurnIfIdle();
+              }, false, { enqueue: false });
+            }
+          }
         } else {
           if (!isStreamingTTSRef.current && utterQueueRef.current.length === 0 && !window.speechSynthesis.speaking) {
             setIsProcessing(false);
@@ -1475,12 +1577,14 @@ const getWelcomeMessage = useCallback(() => {
         setIsProcessing(false);
         isProcessingRef.current = false;
         turnLockRef.current = false;
+        streamSentenceBufferRef.current = '';
+        streamedTurnHadSpeechRef.current = false;
         setError(data.message || 'Errore');
         releaseTurnIfIdle();
         break;
       }
     }
-  }, [speak, executeFunction, stopAssistant]);
+  }, [speak, executeFunction, stopAssistant, pushAssistantHistory, flushStreamedSpeech, releaseTurnIfIdle]);
 
   // Aggiorna la ref del listener dopo ogni render utile
   useEffect(() => {
@@ -1599,7 +1703,8 @@ const getWelcomeMessage = useCallback(() => {
       speak(summary, () => {
         setIsProcessing(false);
         isProcessingRef.current = false;
-        if (restartListeningRef.current) restartListeningRef.current();
+        turnLockRef.current = false;
+        releaseTurnIfIdle();
       }, false, { enqueue: false });
       return;
     }
@@ -1679,17 +1784,6 @@ const getWelcomeMessage = useCallback(() => {
         return;
       }
     }
-    if (readCart.test(lower)) {
-      turnLockRef.current = true;
-      setIsProcessing(true); isProcessingRef.current = true;
-      const summary = buildCartSpeechSummary(5);
-      speak(summary, () => {
-        setIsProcessing(false);
-        isProcessingRef.current = false;
-        if (restartListeningRef.current) restartListeningRef.current();
-      }, false, { enqueue: false });
-      return;
-    }
     const trimmed = lower.trim();
     const shouldClose = /(basta|chiudi|puoi andare|stop|non.*altro|alla prossima|ci sentiamo|puoi riposarti)/i.test(lower)
       || /^(grazie( mille)?( di tutto)?(,? (ciao|a presto|alla prossima|buona giornata|buona serata))?|ti ringrazio(,? (ciao|a presto|alla prossima|buona giornata|buona serata))?)$/.test(trimmed)
@@ -1722,10 +1816,12 @@ const getWelcomeMessage = useCallback(() => {
         ui_filters: {
           q: (window.productsSearchQuery || ''),
           category: (window.productsSelectedCategory || '')
-        }
+        },
+        history: conversationHistoryRef.current.slice(-12)
       }
     });
-  }, [sendMessage, sessionCount, speak, stopAssistant]);
+    pushUserHistory(text);
+  }, [sendMessage, sessionCount, speak, stopAssistant, pushUserHistory, releaseTurnIfIdle]);
 
   // ✅ TOGGLE LISTENING
   const toggleListening = useCallback(async () => {

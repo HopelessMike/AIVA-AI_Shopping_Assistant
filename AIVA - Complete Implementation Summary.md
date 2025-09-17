@@ -98,6 +98,17 @@
 
 ---
 
+## 🔧 Latest Enhancements
+
+- 🗣️ **Descrizioni naturali e veloci**: il backend fornisce al modello un contesto ridotto alle informazioni moda rilevanti, imponendo risposte che raccontano stile e materiali senza elenchi di magazzino; la pipeline di streaming ora ricompone le frasi e le mette in coda con volume uniforme così la voce sintetica le legge in modo fluido e senza cali.
+- 💬 **Memoria di sessione compatta**: il frontend conserva gli ultimi turni utente/assistente (fino a 12 scambi) e li inoltra ad ogni richiesta; il backend li sanifica e li riutilizza, garantendo continuità di conversazione senza gonfiare il contesto.
+- 🛒 **Comandi multi-pezzo affidabili**: richieste come “aggiungi due taglie L rosso e una S bianca” vengono parse prima di chiamare l'LLM, generando più add_to_cart con verifica di varianti disponibili e un riepilogo parlato.
+- 🎧 **Esperienza voice fail-safe**: il player TTS parla ogni chunk di frase in coda, mantiene il lock finché l'ultimo pezzo è pronunciato e registra comunque la risposta nel log conversazionale anche quando arriva in streaming.
+- 🎙️ **Microfono sempre pronto**: il turno viene rilasciato automaticamente dopo i messaggi locali (es. lettura del carrello) così l'assistente riapre il microfono appena finisce di parlare.
+- 🔁 **Gestione turni a prova di blocco**: i controlli su “turno in corso” ora si azzerano alla fine delle risposte vocali evitando che comandi successivi vengano ignorati.
+
+---
+
 ## 📁 Project Structure
 
 ```
