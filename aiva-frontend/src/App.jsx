@@ -1,6 +1,6 @@
 // src/App.jsx - VERSIONE CORRETTA
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, useLocation, Link, NavLink } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShoppingBag,
@@ -233,26 +233,15 @@ const VoiceAssistantButton = ({
 };
 
 // Navigation Component
-const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
+const Navigation = ({ cartItemsCount }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const location = useLocation();
+  const MotionLink = motion(Link);
 
   const navigationItems = [
     { id: 'products', label: 'Prodotti', icon: '📦', path: '/products' },
     { id: 'offers', label: 'Offerte', icon: '🏷️', path: '/offers' },
     { id: 'cart', label: 'Carrello', icon: '🛒', path: '/cart', badge: cartItemsCount }
   ];
-
-  const getCurrentPage = () => {
-    const path = location.pathname;
-    if (path === '/') return 'home';
-    if (path === '/products') return 'products';
-    if (path === '/offers') return 'offers';
-    if (path === '/cart') return 'cart';
-    return 'home';
-  };
-
-  const currentPage = getCurrentPage();
   
   return (
     <motion.nav
@@ -264,25 +253,27 @@ const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-8">
-            <motion.a
-              href="/"
+            <MotionLink
+              to="/"
               className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600 cursor-pointer select-none"
               whileHover={{ scale: 1.05 }}
               style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
             >
               AIVA Fashion
-            </motion.a>
+            </MotionLink>
             <div className="hidden md:flex items-center gap-6">
               {navigationItems.map((item) => (
-                <a
+                <NavLink
                   key={item.id}
-                  href={item.path}
-                  className={`text-gray-700 hover:text-blue-600 transition ${
-                    currentPage === item.id ? 'text-blue-600 font-semibold' : ''
-                  }`}
+                  to={item.path}
+                  className={({ isActive }) =>
+                    `text-gray-700 hover:text-blue-600 transition ${
+                      isActive ? 'text-blue-600 font-semibold' : ''
+                    }`
+                  }
                 >
                   {item.label}
-                </a>
+                </NavLink>
               ))}
             </div>
           </div>
@@ -294,8 +285,8 @@ const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
             <button className="p-2 text-gray-600 hover:text-blue-600">
               <User size={20} />
             </button>
-            <a 
-              href="/cart"
+            <Link
+              to="/cart"
               className="relative p-2 text-gray-600 hover:text-blue-600"
             >
               <ShoppingBag size={20} />
@@ -308,8 +299,8 @@ const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
                   {cartItemsCount}
                 </motion.span>
               )}
-            </a>
-            <button 
+            </Link>
+            <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="md:hidden p-2 text-gray-600"
             >
@@ -330,12 +321,14 @@ const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
           >
             <div className="px-4 py-4 space-y-2">
               {navigationItems.map((item) => (
-                <a
+                <NavLink
                   key={item.id}
-                  href={item.path}
-                  className={`block py-2 px-3 rounded-lg text-gray-700 hover:text-blue-600 hover:bg-blue-50 ${
-                    currentPage === item.id ? 'text-blue-600 font-semibold bg-blue-50' : ''
-                  }`}
+                  to={item.path}
+                  className={({ isActive }) =>
+                    `block py-2 px-3 rounded-lg text-gray-700 hover:text-blue-600 hover:bg-blue-50 ${
+                      isActive ? 'text-blue-600 font-semibold bg-blue-50' : ''
+                    }`
+                  }
                   onClick={() => setMobileMenuOpen(false)}
                 >
                   <span className="mr-2">{item.icon}</span>
@@ -345,7 +338,7 @@ const Navigation = ({ cartItemsCount, isListening, onVoiceToggle }) => {
                       {item.badge}
                     </span>
                   )}
-                </a>
+                </NavLink>
               ))}
             </div>
           </motion.div>
@@ -378,8 +371,16 @@ const Footer = () => {
         <div>
           <h4 className="text-white font-semibold mb-4">Shop</h4>
           <ul className="space-y-2 text-sm">
-            <li><a href="/products" className="hover:text-white transition">Prodotti</a></li>
-            <li><a href="/offers" className="hover:text-white transition">Offerte</a></li>
+            <li>
+              <Link to="/products" className="hover:text-white transition">
+                Prodotti
+              </Link>
+            </li>
+            <li>
+              <Link to="/offers" className="hover:text-white transition">
+                Offerte
+              </Link>
+            </li>
             <li><button onClick={scrollTop} className="hover:text-white transition">Torna Su</button></li>
           </ul>
         </div>
@@ -435,11 +436,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Navigation */}
-      <Navigation
-        cartItemsCount={cartCount}
-        isListening={isListening}
-        onVoiceToggle={toggleListening}
-      />
+      <Navigation cartItemsCount={cartCount} />
       
       {/* Main Content */}
       <AnimatePresence mode="wait">
