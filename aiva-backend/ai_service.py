@@ -6,6 +6,7 @@ import json
 import re
 import logging
 import asyncio
+import random
 from typing import Dict, Any, Optional, List, AsyncGenerator, Tuple
 from datetime import datetime
 import openai
@@ -668,20 +669,76 @@ class SecureAIService:
     def get_quick_response(self, function_name: str, text: str) -> str:
         """Get immediate response while processing"""
         responses = {
-            "search_products": "Cerco quello che mi hai chiesto...",
-            "add_to_cart": "Lo aggiungo al carrello...",
-            "navigate_to_page": "Ti porto subito lì...",
-            "get_cart_summary": "Ecco il tuo carrello...",
-            "clear_cart": "Svuoto il carrello...",
-            "get_recommendations": "Preparo dei suggerimenti...",
-            "apply_ui_filters": "Applico i filtri...",
-            "close_conversation": "A presto! È stato un piacere aiutarti.",
-            "remove_from_cart": "Rimuovo dal carrello...",
-            "remove_last_cart_item": "Rimuovo l'ultimo articolo...",
-            "update_cart_quantity": "Modifico la quantità...",
-            "get_shipping_info": "Recupero le informazioni di spedizione..."
+            "search_products": [
+                "Cerco quello che mi hai chiesto...",
+                "Controllo il catalogo per te...",
+                "Un momento, seleziono i prodotti giusti..."
+            ],
+            "add_to_cart": [
+                "Lo aggiungo subito al carrello...",
+                "Un attimo, inserisco il prodotto nel carrello...",
+                "Perfetto, lo metto nel carrello..."
+            ],
+            "navigate_to_page": [
+                "Ti porto subito lì...",
+                "Arriviamo immediatamente alla pagina giusta...",
+                "Un secondo e siamo nella sezione corretta..."
+            ],
+            "get_cart_summary": [
+                "Ecco il tuo carrello...",
+                "Ti preparo un riepilogo del carrello...",
+                "Vediamo insieme cosa c'è nel carrello..."
+            ],
+            "clear_cart": [
+                "Svuoto il carrello...",
+                "Tolgo tutto dal carrello...",
+                "Procedo a svuotare il carrello..."
+            ],
+            "get_recommendations": [
+                "Preparo dei suggerimenti...",
+                "Ti propongo qualche alternativa interessante...",
+                "Un attimo, seleziono alcune idee per te..."
+            ],
+            "apply_ui_filters": [
+                "Applico i filtri...",
+                "Aggiorno i filtri come richiesto...",
+                "Un istante, imposto i filtri..."
+            ],
+            "close_conversation": [
+                "A presto! È stato un piacere aiutarti.",
+                "Grazie a te, alla prossima!",
+                "Quando vuoi sono qui, a presto!"
+            ],
+            "remove_from_cart": [
+                "Rimuovo dal carrello...",
+                "Tolgo l'articolo dal carrello...",
+                "Un momento, elimino quel prodotto dal carrello..."
+            ],
+            "remove_last_cart_item": [
+                "Rimuovo l'ultimo articolo...",
+                "Tolgo subito l'ultimo articolo aggiunto...",
+                "Via l'ultimo inserimento dal carrello..."
+            ],
+            "update_cart_quantity": [
+                "Modifico la quantità...",
+                "Aggiorno la quantità richiesta...",
+                "Cambio il numero di pezzi come hai chiesto..."
+            ],
+            "get_shipping_info": [
+                "Recupero le informazioni di spedizione...",
+                "Verifico le opzioni di consegna disponibili...",
+                "Ti preparo i dettagli sulla spedizione..."
+            ]
         }
-        return responses.get(function_name, "Un attimo...")
+        defaults = [
+            "Un attimo...",
+            "Sto lavorando alla tua richiesta...",
+            "Dammi solo un secondo..."
+        ]
+        options = responses.get(function_name)
+        if options:
+            return random.choice(options)
+        return random.choice(defaults)
     
     def validate_and_enhance_function_call(self, function_name: str, parameters: Dict, original_text: str) -> bool:
         """Validate and enhance function parameters"""
@@ -746,21 +803,72 @@ class SecureAIService:
     def generate_response_message(self, function_name: str, parameters: Dict) -> str:
         """Generate Italian response message"""
         messages = {
-            "search_products": "Ecco i prodotti che ho trovato per te.",
-            "navigate_to_page": "Ti porto alla pagina {page}.",
-            "add_to_cart": "Ho aggiunto il prodotto al carrello.",
-            "get_cart_summary": "Ecco il riepilogo del tuo carrello.",
-            "clear_cart": "Ho svuotato il carrello.",
-            "apply_ui_filters": "Ho applicato i filtri richiesti.",
-            "close_conversation": "Grazie per aver usato AIVA. A presto!",
-            "remove_from_cart": "Ho rimosso l'articolo dal carrello.",
-            "remove_last_cart_item": "Ho rimosso l'ultimo articolo aggiunto.",
-            "update_cart_quantity": "Ho aggiornato la quantità.",
-            "get_shipping_info": "Ti condivido i dettagli sulla spedizione."
+            "search_products": [
+                "Ecco i prodotti che ho trovato per te.",
+                "Ho selezionato alcune proposte su misura per te.",
+                "Dai un'occhiata a questi articoli che potrebbero piacerti."
+            ],
+            "navigate_to_page": [
+                "Ti porto alla pagina {page}.",
+                "Apriamo la sezione {page}.",
+                "Andiamo subito alla pagina {page}."
+            ],
+            "add_to_cart": [
+                "Ho aggiunto il prodotto al carrello.",
+                "Perfetto, il prodotto è nel tuo carrello.",
+                "Fatto! Trovi l'articolo nel carrello."
+            ],
+            "get_cart_summary": [
+                "Ecco il riepilogo del tuo carrello.",
+                "Questo è lo stato attuale del tuo carrello.",
+                "Ti elenco cosa c'è nel carrello."],
+            "clear_cart": [
+                "Ho svuotato il carrello.",
+                "Il carrello ora è vuoto.",
+                "Ho rimosso tutti gli articoli dal carrello."
+            ],
+            "apply_ui_filters": [
+                "Ho applicato i filtri richiesti.",
+                "Filtri aggiornati come hai chiesto.",
+                "Ho impostato i filtri per affinare la ricerca."
+            ],
+            "close_conversation": [
+                "Grazie per aver usato AIVA. A presto!",
+                "È stato un piacere assisterti, alla prossima!",
+                "Quando vuoi tornare, sono qui. Arrivederci!"
+            ],
+            "remove_from_cart": [
+                "Ho rimosso l'articolo dal carrello.",
+                "Quel prodotto non è più nel carrello.",
+                "Fatto, ho eliminato l'articolo dal carrello."
+            ],
+            "remove_last_cart_item": [
+                "Ho rimosso l'ultimo articolo aggiunto.",
+                "L'ultimo inserimento è stato tolto dal carrello.",
+                "Via l'ultimo prodotto che avevi aggiunto."
+            ],
+            "update_cart_quantity": [
+                "Ho aggiornato la quantità.",
+                "Quantità modificata come richiesto.",
+                "Ho impostato il numero di pezzi desiderato."
+            ],
+            "get_shipping_info": [
+                "Ti condivido i dettagli sulla spedizione.",
+                "Ecco tutte le informazioni sulla consegna.",
+                "Ti riassumo le opzioni di spedizione disponibili."
+            ]
+
         }
-        
-        message = messages.get(function_name, "Operazione completata.")
-        
+
+        default_messages = [
+            "Operazione completata.",
+            "Perfetto, è fatto.",
+            "Tutto sistemato."
+        ]
+
+        templates = messages.get(function_name, default_messages)
+        message_template = random.choice(templates)
+
         try:
             if function_name == "search_products" and parameters.get("filters"):
                 filters = parameters["filters"]
@@ -771,15 +879,13 @@ class SecureAIService:
                     parts.append(f"colore {filters['color']}")
                 if filters.get("on_sale"):
                     parts.append("in offerta")
-                
+
                 if parts:
-                    message = f"Ecco i prodotti {' '.join(parts)}."
-            else:
-                message = message.format(**parameters)
-        except:
-            pass
-        
-        return message
+                    return f"{message_template.rstrip('.')} {' '.join(parts)}.".replace('..', '.')
+
+            return message_template.format(**parameters)
+        except Exception:
+            return message_template
     
     async def enhanced_streaming_fallback(self, text: str, context: Dict) -> AsyncGenerator[Dict, None]:
         """Enhanced fallback for when OpenAI is not available"""

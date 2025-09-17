@@ -1,10 +1,17 @@
 // src/hooks/useVoiceAssistantNative.js - VERSIONE DEFINITIVA FIXATA
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createWebSocketConnection, productAPI, infoAPI } from '../services/api';
+import { createWebSocketConnection, productAPI, infoAPI, voiceAPI } from '../services/api';
+
 import { useCart } from './useCart';
 import { buildCartSpeechSummary } from './useCart';
 import useStore from '../store';
+
+const randomFrom = (list = []) => {
+  if (!Array.isArray(list) || list.length === 0) return '';
+  const index = Math.floor(Math.random() * list.length);
+  return list[index] ?? list[0];
+};
 
 export const useVoiceAssistantNative = () => {
   const [isListening, setIsListening] = useState(false);
@@ -67,13 +74,73 @@ export const useVoiceAssistantNative = () => {
     "Resto a disposizione se ti serve altro.",
     "Quando vuoi riprendere, basta dirmelo.",
     "Sono qui se ti viene in mente qualcos'altro da vedere.",
-    "Va bene, resto in ascolto per quando ti serve."
+    "Va bene, resto in ascolto per quando ti serve.",
+    "Va benissimo, resto disponibile se vuoi continuare più tardi.",
+    "Prenditi pure il tuo tempo, io rimango qui.",
+    "Chiamami pure quando ti viene voglia di esplorare altri look.",
+    "Se vuoi riprendere, basta dirmelo e continuiamo da dove eravamo."
+
   ];
   const listeningTimerRef = useRef(null);
   const activeListenSessionIdRef = useRef(null);
   const beepedThisSessionRef = useRef(false);
   const closingTimerRef = useRef(null);
   const turnLockRef = useRef(false);
+
+  const NAV_ACK_DEFAULT = [
+    "Eccoci qua!",
+    "Perfetto, ti porto subito lì.",
+    "Arriviamo immediatamente.",
+    "Va bene, apriamo questa sezione."
+  ];
+  const NAV_ACK_CART = [
+    "Ecco il carrello con ciò che hai scelto.",
+    "Ti mostro subito il tuo carrello.",
+    "Qui trovi i tuoi articoli in carrello.",
+    "Carrello aperto, diamo un'occhiata."
+  ];
+  const NAV_ACK_OFFERS = [
+    "Ecco le offerte del momento.",
+    "Ti porto subito tra le promozioni.",
+    "Ecco gli sconti attivi ora.",
+    "Guarda qui le proposte in saldo."
+  ];
+  const SEARCH_ACK_MESSAGES = [
+    "Ecco i risultati che ho trovato.",
+    "Perfetto, ho selezionato alcune proposte per te.",
+    "Dai un'occhiata a questi suggerimenti.",
+    "Ho filtrato il catalogo per te, spero ti piacciano."
+  ];
+  const FILTER_ACK_MESSAGES = [
+    "Filtri applicati, il catalogo è aggiornato.",
+    "Perfetto, ho aggiornato la lista secondo le tue preferenze.",
+    "Ecco i prodotti con i filtri richiesti.",
+    "Tutto impostato come da indicazioni."
+  ];
+  const PRODUCT_ACK_MESSAGES = [
+    "Ti apro subito la scheda del prodotto.",
+    "Eccoci sulla scheda dettagliata.",
+    "Ti mostro immediatamente questo articolo.",
+    "Apriamo la pagina del prodotto così lo vedi meglio."
+  ];
+  const CART_ADD_ACK_MESSAGES = [
+    "Perfetto, aggiunto al carrello.",
+    "Articolo inserito nel carrello.",
+    "Fatto, il prodotto è nel tuo carrello.",
+    "Aggiunta completata, trovi tutto nel carrello."
+  ];
+  const CART_REMOVE_ACK_MESSAGES = [
+    "Ok, l'ho tolto dal carrello.",
+    "Fatto, quel prodotto non è più nel carrello.",
+    "Rimosso! Ora il carrello è aggiornato.",
+    "Va bene, l'ho eliminato dal carrello."
+  ];
+  const CART_CLEAR_ACK_MESSAGES = [
+    "Carrello svuotato, partiamo da zero.",
+    "Ho pulito il carrello, ora è vuoto.",
+    "Tutto rimosso, il carrello è di nuovo libero.",
+    "Ok, ho eliminato tutti gli articoli dal carrello."
+  ];
 
   const clearListeningTimers = useCallback(() => {
     if (listeningTimerRef.current) { clearTimeout(listeningTimerRef.current); listeningTimerRef.current = null; }
@@ -198,7 +265,9 @@ export const useVoiceAssistantNative = () => {
       "Eccomi! Sono AIVA, dimmi cosa posso fare per te.",
       "Ciao! Sono pronta ad assisterti con il tuo shopping. Di cosa hai bisogno?",
       "Piacere di rivederti da AIVA Boutique! Cosa esploriamo insieme?",
-      "Ben arrivato nella nostra vetrina digitale. Posso consigliarti qualcosa di speciale?"
+      "Ben arrivato nella nostra vetrina digitale. Posso consigliarti qualcosa di speciale?",
+      "Che bello averti qui! Ti va di scoprire qualche novità?",
+      "Ciao e ben ritrovato! Possiamo iniziare con qualcosa che hai in mente?"
     ];
 
     const shortMessages = [
@@ -207,7 +276,9 @@ export const useVoiceAssistantNative = () => {
       "Sono qui! Dimmi cosa ti serve.",
       "Dimmi pure, sono tutta orecchi.",
       "Hai voglia di dare un'occhiata a qualcosa di nuovo?",
-      "Pronta quando vuoi tu!"
+      "Pronta quando vuoi tu!",
+      "Tornata in linea! Vuoi che ripartiamo da dove eravamo?",
+      "Dimmi pure come posso darti una mano adesso."
     ];
     
     if (sessionCount === 0) {
@@ -363,9 +434,14 @@ export const useVoiceAssistantNative = () => {
           // reset di sicurezza prima dell'ack
           streamBufferRef.current = '';
           dropStaleResponsesRef.current = false;
+          const navAck = path === '/cart'
+            ? randomFrom(NAV_ACK_CART)
+            : path === '/offers'
+              ? randomFrom(NAV_ACK_OFFERS)
+              : randomFrom(NAV_ACK_DEFAULT);
           // conferma breve + rilascio turno in onEnd
           speak(
-            path === '/cart' ? 'Ecco il carrello.' : (path === '/offers' ? 'Ecco le offerte.' : 'Ecco!'),
+            navAck || 'Ecco!',
             () => {
               // fine ack → chiudi loading e riapri mic
               setIsProcessing(false); isProcessingRef.current = false;
@@ -415,7 +491,7 @@ export const useVoiceAssistantNative = () => {
             }, 500);
           }
           // Ack e rilascio del turno al termine
-          speak('Ecco!', () => {
+          speak(randomFrom(SEARCH_ACK_MESSAGES) || 'Ecco!', () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -431,7 +507,7 @@ export const useVoiceAssistantNative = () => {
           } else {
             applyUIFilters(parameters.filters || {});
           }
-          speak('Fatto.', () => {
+          speak(randomFrom(FILTER_ACK_MESSAGES) || 'Fatto.', () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -442,7 +518,7 @@ export const useVoiceAssistantNative = () => {
           const productId = parameters.product_id;
           console.log('📦 Showing product:', productId);
           navigate(`/products/${productId}`);
-          speak('Ecco!', () => {
+          speak(randomFrom(PRODUCT_ACK_MESSAGES) || 'Ecco!', () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -523,7 +599,7 @@ export const useVoiceAssistantNative = () => {
                 parameters.quantity || 1
               );
             }
-            speak('Aggiunto al carrello.', () => {
+            speak(randomFrom(CART_ADD_ACK_MESSAGES) || 'Aggiunto al carrello.', () => {
               setIsProcessing(false); isProcessingRef.current = false;
               turnLockRef.current = false;
               if (restartListeningRef.current) restartListeningRef.current();
@@ -554,7 +630,7 @@ export const useVoiceAssistantNative = () => {
           console.log('🗑️ Removing from cart:', id || item_id);
           if (id) {
             await removeFromCart(id);
-            speak('Ok, rimosso dal carrello.');
+            speak(randomFrom(CART_REMOVE_ACK_MESSAGES) || 'Rimosso dal carrello.');
           } else {
             speak('Non trovo quel prodotto nel carrello. Puoi ripetere il nome o dirmi la taglia e il colore?');
           }
@@ -577,7 +653,7 @@ export const useVoiceAssistantNative = () => {
         case 'view_cart':
           console.log('🛒 Opening cart');
           navigate('/cart');
-          speak('Ecco il carrello.', () => {
+          speak(randomFrom(NAV_ACK_CART) || 'Ecco il carrello.', () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -587,7 +663,7 @@ export const useVoiceAssistantNative = () => {
         case 'clear_cart':
           console.log('🗑️ Clearing cart');
           await clearCartAction();
-          speak('Carrello svuotato.', () => {
+          speak(randomFrom(CART_CLEAR_ACK_MESSAGES) || 'Carrello svuotato.', () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -1413,13 +1489,16 @@ export const useVoiceAssistantNative = () => {
     // HTTP fallback (Serverless friendly)
     try {
       if (message?.type === 'voice_command') {
-        const res = await fetch('/api/voice/command', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: message.text, context: message.context, session_id: message.context?.session_id })
-        });
-        const json = await res.json();
+        const json = await voiceAPI.processVoiceCommand(
+          message.text,
+          message.context,
+          message.context?.session_id
+        );
         const events = Array.isArray(json?.events) ? json.events : [];
+        if (events.length === 0) {
+          handleWSMessageRef.current && handleWSMessageRef.current({ type: 'error', message: 'Risposta vuota dal server vocale' });
+          return;
+        }
         for (const evt of events) {
           try { handleWSMessageRef.current && handleWSMessageRef.current(evt); } catch {}
         }
@@ -1601,7 +1680,11 @@ export const useVoiceAssistantNative = () => {
       }, false, { enqueue: false });
       return;
     }
-    if (/(ciao|grazie.*|basta|chiudi|puoi andare|stop|non.*altro)/i.test(lower)) {
+    const trimmed = lower.trim();
+    const shouldClose = /(basta|chiudi|puoi andare|stop|non.*altro|alla prossima|ci sentiamo|puoi riposarti)/i.test(lower)
+      || /^(grazie( mille)?( di tutto)?(,? (ciao|a presto|alla prossima|buona giornata|buona serata))?|ti ringrazio(,? (ciao|a presto|alla prossima|buona giornata|buona serata))?)$/.test(trimmed)
+      || /^ciao(?:\s+(?:e\s+)?(grazie|alla prossima|per ora|ti ringrazio|a presto|buona serata|buona giornata).*)$/.test(trimmed);
+    if (shouldClose) {
       speak("Perfetto, alla prossima!", () => stopAssistant());
       return;
     }

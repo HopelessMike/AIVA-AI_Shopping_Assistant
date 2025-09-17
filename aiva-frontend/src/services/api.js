@@ -14,7 +14,6 @@ const deriveApiBase = () => {
 };
 
 const API_BASE = deriveApiBase();
-
 const API_ROOT = API_BASE.replace(/\/api$/, '');
 
 const buildApiUrl = (endpoint = '') => {
@@ -138,10 +137,15 @@ export const cartAPI = {
 
 // Voice/AI API
 export const voiceAPI = {
-  async processVoiceCommand(text, context = {}) {
+  async processVoiceCommand(text, context = {}, sessionId) {
+    const payload = { text, context };
+    if (sessionId) payload.session_id = sessionId;
+
     const res = await fetch(`${API_BASE}/voice/command`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, context })
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(payload)
     });
     if (!res.ok) throw new Error(`POST /voice/command ${res.status}`);
     return res.json();
