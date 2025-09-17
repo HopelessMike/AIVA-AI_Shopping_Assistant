@@ -28,7 +28,41 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AIVA")
 
 # Security configurations
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+
+
+def _parse_origins(raw: Optional[str]) -> Set[str]:
+    if not raw:
+        return set()
+    origins: Set[str] = set()
+    for origin in raw.split(","):
+        cleaned = origin.strip()
+        if cleaned:
+            origins.add(cleaned.rstrip("/"))
+    return origins
+
+
+_base_allowed_origins = _parse_origins(os.getenv("ALLOWED_ORIGINS")) or {
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+}
+
+for env_name in ("FRONTEND_URL", "PUBLIC_FRONTEND_URL", "FRONTEND_ORIGIN"):
+    maybe_origin = os.getenv(env_name)
+    if maybe_origin:
+        _base_allowed_origins.update(_parse_origins(maybe_origin))
+
+vercel_frontend = os.getenv("FRONTEND_VERCEL_URL") or os.getenv("NEXT_PUBLIC_SITE_URL")
+if vercel_frontend:
+    _base_allowed_origins.update(_parse_origins(vercel_frontend))
+
+origin_regex_env = os.getenv("ALLOWED_ORIGIN_REGEX")
+if origin_regex_env and origin_regex_env.lower() in {"0", "false", "none"}:
+    _allowed_origin_regex = None
+else:
+    _allowed_origin_regex = origin_regex_env or r"https://.*\.vercel\.app"
+
 API_KEY = os.getenv("API_KEY", "demo-key-for-development")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 MAX_REQUESTS_PER_MINUTE = 60
@@ -44,13 +78,23 @@ app = FastAPI(
 )
 
 # CORS Configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
+cors_kwargs: Dict[str, Any] = {
+    "allow_origins": sorted(_base_allowed_origins),
+    "allow_credentials": True,
+    "allow_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["*"],
+}
+
+if _allowed_origin_regex:
+    cors_kwargs["allow_origin_regex"] = _allowed_origin_regex
+
+logger.info(
+    "Configured CORS allow_origins=%s allow_origin_regex=%s",
+    cors_kwargs["allow_origins"],
+    cors_kwargs.get("allow_origin_regex"),
 )
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 # Static files (for serving images in production/dev)
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
