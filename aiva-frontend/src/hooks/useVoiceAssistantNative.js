@@ -258,45 +258,47 @@ export const useVoiceAssistantNative = () => {
   const INTERACTION_CHECK_INTERVAL = 15000; // Check every 10 seconds
 
   // Welcome messages
-const getWelcomeMessage = useCallback(() => {
-  const welcomeMessages = [
-    // --- Set 1: Chiare e dirette ---
-    "Ciao! Sono AIVA, la tua personal shopper AI. Come posso aiutarti oggi?",
-    "Benvenuto. Sono AIVA, qui per aiutarti a navigare tra le nostre collezioni. Cerchi ispirazione o hai già un'idea precisa?",
-    "Ciao! Sono AIVA, l'assistente AI pronta a trasformare la tua esperienza di shopping. Cosa posso fare per te?",
+  const getWelcomeMessage = useCallback(() => {
+    const welcomeMessages = [
+      // --- Set 1: Chiare e dirette ---
+      "Ciao! Sono AIVA, la tua personal shopper AI. Come posso aiutarti oggi?",
+      "Benvenuto. Sono AIVA, qui per aiutarti a navigare tra le nostre collezioni. Cerchi ispirazione o hai già un'idea precisa?",
+      "Ciao! Sono AIVA, l'assistente AI pronta a trasformare la tua esperienza di shopping. Cosa posso fare per te?",
 
-    // --- Set 2: Creative e ispirazionali ---
-    "Benvenuto nel nostro ecommerce. Sono AIVA, la tua personal shopper AI. Quali prodotti ti piacerebbe vedere?",
-    "Sono AIVA, la tua assistente allo shopping. Insieme possiamo scoprire le nuove collezioni o trovare esattamente ciò che desideri. Da dove vogliamo cominciare?",
+      // --- Set 2: Creative e ispirazionali ---
+      "Benvenuto nel nostro ecommerce. Sono AIVA, la tua personal shopper AI. Quali prodotti ti piacerebbe vedere?",
+      "Sono AIVA, la tua assistente allo shopping. Insieme possiamo scoprire le nuove collezioni o trovare esattamente ciò che desideri. Da dove vogliamo cominciare?",
 
-    // --- Set 3: Guidate e interattive ---
-    "Benvenuto! Sono AIVA e sono qui per aiutarti a trovare l'outfit perfetto. Puoi dirmi cosa cerchi oppure chiedermi di mostrarti le ultime offerte."
-  ];
+      // --- Set 3: Guidate e interattive ---
+      "Benvenuto! Sono AIVA e sono qui per aiutarti a trovare l'outfit perfetto. Puoi dirmi cosa cerchi oppure chiedermi di mostrarti le ultime offerte."
+    ];
 
-  const shortMessages = [
-    // --- Set 1: Rapide e dirette ---
-    "Eccomi di nuovo.",
-    "Rieccomi.",
-    "Bentornato.",
-    "Sono di nuovo qui. Dimmi pure.",
+    const shortMessages = [
+      // --- Set 1: Rapide e dirette ---
+      "Eccomi di nuovo.",
+      "Rieccomi.",
+      "Bentornato.",
+      "Sono di nuovo qui. Dimmi pure.",
 
-    // --- Set 2: Contestuali e propositive ---
-    "Pronta a continuare. Hai trovato qualcosa che ti piace o cerchiamo altro?",
+      // --- Set 2: Contestuali e propositive ---
+      "Pronta a continuare. Hai trovato qualcosa che ti piace o cerchiamo altro?",
 
-    // --- Set 3: Amichevoli e concise ---
-    "Ok, continuiamo. Cosa facciamo ora?",
-    "Pronti a ripartire. Ti ascolto."
-  ];
+      // --- Set 3: Amichevoli e concise ---
+      "Ok, continuiamo. Cosa facciamo ora?",
+      "Pronti a ripartire. Ti ascolto."
+    ];
 
-  // Logic to select and return a message would go here...
-});
-    
+    const pickRandom = (messages) => {
+      if (!messages || messages.length === 0) return '';
+      return messages[Math.floor(Math.random() * messages.length)] || '';
+    };
+
     if (sessionCount === 0) {
       setSessionCount(1);
-      return welcomeMessages[Math.floor(Math.random() * welcomeMessages.length)];
-    } else {
-      return shortMessages[Math.floor(Math.random() * shortMessages.length)];
+      return pickRandom(welcomeMessages);
     }
+
+    return pickRandom(shortMessages);
   }, [sessionCount]);
 
   // Browser support check

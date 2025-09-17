@@ -84,6 +84,96 @@ MAPPING TERMINI:
 - scarpe da ginnastica → scarpe
 """
 
+BASE_CATEGORIES = [
+    "t-shirt",
+    "camicia",
+    "maglione",
+    "felpa",
+    "giacca",
+    "pantaloni",
+    "shorts",
+    "gonna",
+    "vestito",
+    "scarpe",
+    "accessori",
+]
+
+CATEGORY_SYNONYMS = {
+    **{cat: cat for cat in BASE_CATEGORIES},
+    "maglia": "t-shirt",
+    "maglie": "t-shirt",
+    "maglietta": "t-shirt",
+    "magliette": "t-shirt",
+    "polo": "t-shirt",
+    "felpe": "felpa",
+    "felpa con cappuccio": "felpa",
+    "hoodie": "felpa",
+    "maglioni": "maglione",
+    "pullover": "maglione",
+    "cardigan": "maglione",
+    "dolcevita": "maglione",
+    "giubbotto": "giacca",
+    "giubbotti": "giacca",
+    "giacche": "giacca",
+    "bomber": "giacca",
+    "piumino": "giacca",
+    "cappotto": "giacca",
+    "jeans": "pantaloni",
+    "denim": "pantaloni",
+    "chino": "pantaloni",
+    "pantalone": "pantaloni",
+    "pantaloncini": "shorts",
+    "bermuda": "shorts",
+    "gonne": "gonna",
+    "gonnellina": "gonna",
+    "minigonna": "gonna",
+    "vestiti": "vestito",
+    "vestitini": "vestito",
+    "abito": "vestito",
+    "abiti": "vestito",
+    "dress": "vestito",
+    "scarpa": "scarpe",
+    "scarpe": "scarpe",
+    "sneaker": "scarpe",
+    "sneakers": "scarpe",
+    "stivale": "scarpe",
+    "stivali": "scarpe",
+    "sandalo": "scarpe",
+    "sandali": "scarpe",
+    "anfibi": "scarpe",
+    "mocassini": "scarpe",
+    "décolleté": "scarpe",
+    "decollete": "scarpe",
+    "accessorio": "accessori",
+    "accessori": "accessori",
+    "cintura": "accessori",
+    "cinture": "accessori",
+    "cappello": "accessori",
+    "cappelli": "accessori",
+    "sciarpa": "accessori",
+    "sciarpe": "accessori",
+    "borsa": "accessori",
+    "borse": "accessori",
+}
+
+
+def detect_category_from_text(text_lower: str) -> Optional[Tuple[str, str]]:
+    """Return (canonical, matched_phrase) if a known category is mentioned."""
+
+    matched_phrase = ""
+    matched_category: Optional[str] = None
+
+    for phrase, canonical in CATEGORY_SYNONYMS.items():
+        if not phrase:
+            continue
+        if phrase in text_lower and len(phrase) >= len(matched_phrase):
+            matched_phrase = phrase
+            matched_category = canonical
+
+    if matched_category:
+        return matched_category, matched_phrase
+    return None
+
 class SecureAIService:
     """Enhanced AI service with Italian support and improved function execution"""
     
@@ -427,6 +517,50 @@ class SecureAIService:
             yield {"type": "function_complete", "function": "search_products", "parameters": {"query": "", "filters": {"on_sale": True}}}
             yield {"type": "complete", "message": None}
             return
+
+        # Intent rapido: categorie specifiche (scarpe, vestiti, ecc.)
+        category_detection = detect_category_from_text(text_lower)
+        if category_detection:
+            category, matched_phrase = category_detection
+            triggers = [
+                "mostra",
+                "mostrami",
+                "fammi vedere",
+                "vedere",
+                "cerca",
+                "cerco",
+                "voglio",
+                "vorrei",
+                "solo",
+                "soltanto",
+                "categoria",
+            ]
+            if any(trigger in text_lower for trigger in triggers) or text_lower.strip() in {category, matched_phrase}:
+                filters = {"category": category}
+                if "da uomo" in text_lower or "per uomo" in text_lower:
+                    filters["gender"] = "uomo"
+                elif "da donna" in text_lower or "per donna" in text_lower:
+                    filters["gender"] = "donna"
+                if any(word in text_lower for word in ["offerta", "offerte", "sconto", "saldi", "promozioni"]):
+                    filters["on_sale"] = True
+
+                yield {
+                    "type": "function_complete",
+                    "function": "navigate_to_page",
+                    "parameters": {"page": "prodotti"},
+                }
+                yield {
+                    "type": "function_complete",
+                    "function": "apply_ui_filters",
+                    "parameters": {"filters": filters},
+                }
+                yield {
+                    "type": "function_complete",
+                    "function": "search_products",
+                    "parameters": {"query": category, "filters": filters},
+                }
+                yield {"type": "complete", "message": None}
+                return
 
         # Intent rapidi: "prodotti", "catalogo", "tutti i prodotti"
         if any(k in text_lower for k in ["tutti i prodotti", "catalogo"]) or text_lower.strip() in ["prodotti"]:
@@ -899,19 +1033,37 @@ class SecureAIService:
         await asyncio.sleep(0.3)
         
         # Detect intent and respond
-        if any(word in text_lower for word in ["cerca", "cerco", "mostra", "mostrami", "voglio", "vorrei"]):
+        if any(word in text_lower for word in ["cerca", "cerco", "mostra", "mostrami", "voglio", "vorrei", "fammi vedere"]):
             # Search intent
-            query = text_lower.replace("cerca", "").replace("cerco", "").replace("mostra", "").replace("mostrami", "").strip()
-            
+            query = (
+                text_lower
+                .replace("cerca", "")
+                .replace("cerco", "")
+                .replace("mostra", "")
+                .replace("mostrami", "")
+                .replace("voglio", "")
+                .replace("vorrei", "")
+                .replace("fammi vedere", "")
+                .strip()
+            )
+
             filters = {}
             if "da uomo" in text_lower or "per uomo" in text_lower:
                 filters["gender"] = "uomo"
             elif "da donna" in text_lower or "per donna" in text_lower:
                 filters["gender"] = "donna"
-            
+
             if "offerta" in text_lower or "sconto" in text_lower:
                 filters["on_sale"] = True
-            
+
+            category_detection = detect_category_from_text(text_lower)
+            if category_detection:
+                category, _ = category_detection
+                filters["category"] = category
+                query = category
+            else:
+                query = query.strip(" .")
+
             # Navigate first
             yield {
                 "type": "function_complete",
@@ -919,9 +1071,17 @@ class SecureAIService:
                 "parameters": {"page": "prodotti"},
                 "message": "Ti porto ai prodotti..."
             }
-            
+
             await asyncio.sleep(0.5)
-            
+
+            if filters:
+                yield {
+                    "type": "function_complete",
+                    "function": "apply_ui_filters",
+                    "parameters": {"filters": filters},
+                    "message": None,
+                }
+
             yield {
                 "type": "function_complete",
                 "function": "search_products",
