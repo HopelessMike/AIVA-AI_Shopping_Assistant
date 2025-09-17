@@ -258,28 +258,38 @@ export const useVoiceAssistantNative = () => {
   const INTERACTION_CHECK_INTERVAL = 10000; // Check every 10 seconds
 
   // Welcome messages
-  const getWelcomeMessage = useCallback(() => {
-    const welcomeMessages = [
-      "Ciao! Sono AIVA, il tuo personal shopper AI. Come posso aiutarti oggi?",
-      "Benvenuto! Sono qui per aiutarti a trovare l'outfit perfetto. Cosa stai cercando?",
-      "Eccomi! Sono AIVA, dimmi cosa posso fare per te.",
-      "Ciao! Sono pronta ad assisterti con il tuo shopping. Di cosa hai bisogno?",
-      "Piacere di rivederti da AIVA Boutique! Cosa esploriamo insieme?",
-      "Ben arrivato nella nostra vetrina digitale. Posso consigliarti qualcosa di speciale?",
-      "Che bello averti qui! Ti va di scoprire qualche novità?",
-      "Ciao e ben ritrovato! Possiamo iniziare con qualcosa che hai in mente?"
-    ];
+const getWelcomeMessage = useCallback(() => {
+  const welcomeMessages = [
+    // --- Set 1: Chiare e dirette ---
+    "Ciao! Sono AIVA, la tua personal shopper AI. Come posso aiutarti oggi?",
+    "Benvenuto. Sono AIVA, qui per aiutarti a navigare tra le nostre collezioni. Cerchi ispirazione o hai già un'idea precisa?",
+    "Ciao! Sono AIVA, l'assistente AI pronta a trasformare la tua esperienza di shopping. Cosa posso fare per te?",
 
-    const shortMessages = [
-      "Eccomi di nuovo! Come posso aiutarti?",
-      "Bentornato! Cosa cerchi oggi?",
-      "Sono qui! Dimmi cosa ti serve.",
-      "Dimmi pure, sono tutta orecchi.",
-      "Hai voglia di dare un'occhiata a qualcosa di nuovo?",
-      "Pronta quando vuoi tu!",
-      "Tornata in linea! Vuoi che ripartiamo da dove eravamo?",
-      "Dimmi pure come posso darti una mano adesso."
-    ];
+    // --- Set 2: Creative e ispirazionali ---
+    "Benvenuto nel nostro ecommerce. Sono AIVA, la tua personal shopper AI. Quali prodotti ti piacerebbe vedere?",
+    "Sono AIVA, la tua assistente allo shopping. Insieme possiamo scoprire le nuove collezioni o trovare esattamente ciò che desideri. Da dove vogliamo cominciare?",
+
+    // --- Set 3: Guidate e interattive ---
+    "Benvenuto! Sono AIVA e sono qui per aiutarti a trovare l'outfit perfetto. Puoi dirmi cosa cerchi oppure chiedermi di mostrarti le ultime offerte."
+  ];
+
+  const shortMessages = [
+    // --- Set 1: Rapide e dirette ---
+    "Eccomi di nuovo.",
+    "Rieccomi.",
+    "Bentornato.",
+    "Sono di nuovo qui. Dimmi pure.",
+
+    // --- Set 2: Contestuali e propositive ---
+    "Pronta a continuare. Hai trovato qualcosa che ti piace o cerchiamo altro?",
+
+    // --- Set 3: Amichevoli e concise ---
+    "Ok, continuiamo. Cosa facciamo ora?",
+    "Pronti a ripartire. Ti ascolto."
+  ];
+
+  // Logic to select and return a message would go here...
+});
     
     if (sessionCount === 0) {
       setSessionCount(1);
