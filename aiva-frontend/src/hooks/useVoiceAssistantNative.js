@@ -47,6 +47,8 @@ export const useVoiceAssistantNative = () => {
   const queuedMessagesRef = useRef([]);
   const inactivityTimeoutRef = useRef(null);
   const streamBufferRef = useRef('');
+  const streamSentenceBufferRef = useRef('');
+  const streamedTurnHadSpeechRef = useRef(false);
   const isStreamingTTSRef = useRef(false);
   const streamReleasePendingRef = useRef(false);
   const utterQueueRef = useRef([]);
@@ -1108,7 +1110,9 @@ export const useVoiceAssistantNative = () => {
     // ✅ svuota coda TTS e timer safety
     utterQueueRef.current = [];
     if (ttsSafetyTimerRef.current) { clearTimeout(ttsSafetyTimerRef.current); ttsSafetyTimerRef.current = null; }
-    
+    streamSentenceBufferRef.current = '';
+    streamedTurnHadSpeechRef.current = false;
+
     // Clear timeouts
     if (inactivityTimeoutRef.current) { clearTimeout(inactivityTimeoutRef.current); inactivityTimeoutRef.current = null; }
     clearListeningTimers();          // ⬅️ importante
@@ -1344,6 +1348,33 @@ export const useVoiceAssistantNative = () => {
     } catch {}
   }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle]);
 
+  const flushStreamedSpeech = useCallback((force = false) => {
+    const raw = (streamSentenceBufferRef.current || '').replace(/\s+/g, ' ').trim();
+    if (!raw) return false;
+
+    const sentences = segmentTextIntoSentences(raw);
+    if (!sentences.length) return false;
+
+    const pending = [];
+    let spoke = false;
+
+    sentences.forEach((sentence, idx) => {
+      const trimmed = sentence.trim();
+      if (!trimmed) return;
+      const hasTerminator = /[\.!?…:]\s*$/.test(trimmed);
+      if (force || hasTerminator || trimmed.length > 160) {
+        speak(trimmed, () => {}, false, { enqueue: true });
+        spoke = true;
+        streamedTurnHadSpeechRef.current = true;
+      } else {
+        pending.push(trimmed);
+      }
+    });
+
+    streamSentenceBufferRef.current = pending.join(' ');
+    return spoke;
+  }, [segmentTextIntoSentences, speak]);
+
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback((data) => {
     // ⛔ se non sono attivo, ignora il messaggio
@@ -1366,6 +1397,8 @@ export const useVoiceAssistantNative = () => {
         safeStopRecognition(); // mic OFF
         // prepara buffer per eventuale stream
         streamBufferRef.current = '';
+        streamSentenceBufferRef.current = '';
+        streamedTurnHadSpeechRef.current = false;
         assistantTurnBufferRef.current = '';
         lastAssistantHistoryRef.current = '';
         dropStaleResponsesRef.current = false; // ✅ da qui ricominciamo ad accettare messaggi
@@ -1380,6 +1413,8 @@ export const useVoiceAssistantNative = () => {
       case 'stream_start': {
         // Disabilita parlato chunk-by-chunk: bufferizza soltanto
         streamBufferRef.current = '';
+        streamSentenceBufferRef.current = '';
+        streamedTurnHadSpeechRef.current = false;
         assistantTurnBufferRef.current = '';
         isStreamingTTSRef.current = true;
         streamReleasePendingRef.current = false;
@@ -1392,17 +1427,25 @@ export const useVoiceAssistantNative = () => {
           if (raw) {
             assistantTurnBufferRef.current = `${assistantTurnBufferRef.current} ${raw}`.trim();
             streamBufferRef.current = `${streamBufferRef.current} ${raw}`.trim();
-            processingOwnedBySpeechRef.current = true;
-            speak(raw, () => {}, false, { enqueue: true });
+            streamSentenceBufferRef.current = `${streamSentenceBufferRef.current} ${raw}`.trim();
+            const spoke = flushStreamedSpeech(false);
+            if (spoke) {
+              processingOwnedBySpeechRef.current = true;
+            }
           }
         }
         break;
       }
 
       case 'stream_complete': {
+        const spoke = flushStreamedSpeech(true);
+        if (spoke) {
+          processingOwnedBySpeechRef.current = true;
+        }
         isStreamingTTSRef.current = false;
         streamReleasePendingRef.current = true;
         streamBufferRef.current = '';
+        streamSentenceBufferRef.current = '';
         if (!window.speechSynthesis.speaking && utterQueueRef.current.length === 0) {
           setIsProcessing(false);
           isProcessingRef.current = false;
@@ -1469,6 +1512,11 @@ export const useVoiceAssistantNative = () => {
                 isProcessingRef.current = false;
                 releaseTurnIfIdle();
               }, false, { enqueue: false });
+            } else {
+              const spoke = flushStreamedSpeech(true);
+              if (spoke) {
+                processingOwnedBySpeechRef.current = true;
+              }
             }
           }
         }
@@ -1476,6 +1524,10 @@ export const useVoiceAssistantNative = () => {
       }
 
       case 'complete': {
+        const spoke = flushStreamedSpeech(true);
+        if (spoke) {
+          processingOwnedBySpeechRef.current = true;
+        }
         // Se il server ha inviato stream chunks ma non message, il buffer è stato già parlato su stream_complete
         if (data.message) {
           const finalText = (data.message || '').trim();
@@ -1487,12 +1539,14 @@ export const useVoiceAssistantNative = () => {
               pushAssistantHistory(finalText);
               lastAssistantHistoryRef.current = finalText;
             }
-            processingOwnedBySpeechRef.current = true;
-            speak(finalText, () => {
-              setIsProcessing(false);
-              isProcessingRef.current = false;
-              releaseTurnIfIdle();
-            }, false, { enqueue: false });
+            if (!streamedTurnHadSpeechRef.current && !data.streamed) {
+              processingOwnedBySpeechRef.current = true;
+              speak(finalText, () => {
+                setIsProcessing(false);
+                isProcessingRef.current = false;
+                releaseTurnIfIdle();
+              }, false, { enqueue: false });
+            }
           }
         } else {
           if (!isStreamingTTSRef.current && utterQueueRef.current.length === 0 && !window.speechSynthesis.speaking) {
@@ -1523,12 +1577,14 @@ export const useVoiceAssistantNative = () => {
         setIsProcessing(false);
         isProcessingRef.current = false;
         turnLockRef.current = false;
+        streamSentenceBufferRef.current = '';
+        streamedTurnHadSpeechRef.current = false;
         setError(data.message || 'Errore');
         releaseTurnIfIdle();
         break;
       }
     }
-  }, [speak, executeFunction, stopAssistant, pushAssistantHistory]);
+  }, [speak, executeFunction, stopAssistant, pushAssistantHistory, flushStreamedSpeech, releaseTurnIfIdle]);
 
   // Aggiorna la ref del listener dopo ogni render utile
   useEffect(() => {
@@ -1647,7 +1703,8 @@ export const useVoiceAssistantNative = () => {
       speak(summary, () => {
         setIsProcessing(false);
         isProcessingRef.current = false;
-        if (restartListeningRef.current) restartListeningRef.current();
+        turnLockRef.current = false;
+        releaseTurnIfIdle();
       }, false, { enqueue: false });
       return;
     }
@@ -1727,17 +1784,6 @@ export const useVoiceAssistantNative = () => {
         return;
       }
     }
-    if (readCart.test(lower)) {
-      turnLockRef.current = true;
-      setIsProcessing(true); isProcessingRef.current = true;
-      const summary = buildCartSpeechSummary(5);
-      speak(summary, () => {
-        setIsProcessing(false);
-        isProcessingRef.current = false;
-        if (restartListeningRef.current) restartListeningRef.current();
-      }, false, { enqueue: false });
-      return;
-    }
     const trimmed = lower.trim();
     const shouldClose = /(basta|chiudi|puoi andare|stop|non.*altro|alla prossima|ci sentiamo|puoi riposarti)/i.test(lower)
       || /^(grazie( mille)?( di tutto)?(,? (ciao|a presto|alla prossima|buona giornata|buona serata))?|ti ringrazio(,? (ciao|a presto|alla prossima|buona giornata|buona serata))?)$/.test(trimmed)
@@ -1775,7 +1821,7 @@ export const useVoiceAssistantNative = () => {
       }
     });
     pushUserHistory(text);
-  }, [sendMessage, sessionCount, speak, stopAssistant, pushUserHistory]);
+  }, [sendMessage, sessionCount, speak, stopAssistant, pushUserHistory, releaseTurnIfIdle]);
 
   // ✅ TOGGLE LISTENING
   const toggleListening = useCallback(async () => {
