@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createWebSocketConnection, productAPI, infoAPI, voiceAPI } from '../services/api';
+
 import { useCart } from './useCart';
 import { buildCartSpeechSummary } from './useCart';
 import useStore from '../store';
@@ -78,6 +79,7 @@ export const useVoiceAssistantNative = () => {
     "Prenditi pure il tuo tempo, io rimango qui.",
     "Chiamami pure quando ti viene voglia di esplorare altri look.",
     "Se vuoi riprendere, basta dirmelo e continuiamo da dove eravamo."
+
   ];
   const listeningTimerRef = useRef(null);
   const activeListenSessionIdRef = useRef(null);

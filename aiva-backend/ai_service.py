@@ -857,6 +857,7 @@ class SecureAIService:
                 "Ecco tutte le informazioni sulla consegna.",
                 "Ti riassumo le opzioni di spedizione disponibili."
             ]
+
         }
 
         default_messages = [
