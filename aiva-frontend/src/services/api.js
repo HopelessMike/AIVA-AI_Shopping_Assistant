@@ -1,4 +1,5 @@
 // src/services/api.js - API Service for Backend Integration
+import { getSessionId, withSessionHeaders } from '../utils/session';
 const deriveApiBase = () => {
   const direct = import.meta.env.VITE_API_BASE_URL;
   if (direct) return direct.replace(/\/+$/, '');
@@ -26,10 +27,11 @@ const buildApiUrl = (endpoint = '') => {
 
 const fetchJson = async (endpoint, options = {}) => {
   const url = buildApiUrl(endpoint);
-  const res = await fetch(url, {
+  const finalOptions = withSessionHeaders({
     credentials: options.credentials ?? 'include',
     ...options,
   });
+  const res = await fetch(url, finalOptions);
   if (!res.ok) {
     throw new Error(`${options.method || 'GET'} ${url} ${res.status}`);
   }
@@ -40,10 +42,11 @@ const fetchRootJson = async (endpoint, options = {}) => {
   const url = endpoint.startsWith('http')
     ? endpoint
     : `${API_ROOT.replace(/\/+$/, '')}/${endpoint.replace(/^\//, '')}`;
-  const res = await fetch(url, {
+  const finalOptions = withSessionHeaders({
     credentials: options.credentials ?? 'include',
     ...options,
   });
+  const res = await fetch(url, finalOptions);
   if (!res.ok) {
     throw new Error(`${options.method || 'GET'} ${url} ${res.status}`);
   }
@@ -54,40 +57,55 @@ const fetchRootJson = async (endpoint, options = {}) => {
 export const productAPI = {
   async getProducts(params = {}) {
     const qs = new URLSearchParams(params);
-    const res = await fetch(`${API_BASE}/products?${qs.toString()}`, { credentials: 'include' });
+    const res = await fetch(
+      `${API_BASE}/products?${qs.toString()}`,
+      withSessionHeaders({ credentials: 'include' })
+    );
     if (!res.ok) throw new Error(`GET /products ${res.status}`);
     return res.json();
   },
 
   async getSizeGuide(category) {
-    const res = await fetch(`${API_BASE}/size-guide/${encodeURIComponent(category)}`);
+    const res = await fetch(
+      `${API_BASE}/size-guide/${encodeURIComponent(category)}`,
+      withSessionHeaders()
+    );
     if (!res.ok) throw new Error(`GET /size-guide ${res.status}`);
     return res.json();
   },
 
   async getProduct(id) {
-    const res = await fetch(`${API_BASE}/products/${id}`, { credentials: 'include' });
+    const res = await fetch(`${API_BASE}/products/${id}`, withSessionHeaders({ credentials: 'include' }));
     if (!res.ok) throw new Error(`GET /products/${id} ${res.status}`);
     return res.json();
   },
 
   async checkAvailability(productId, size, color) {
     const qs = new URLSearchParams({ size, color });
-    const res = await fetch(`${API_BASE}/products/${productId}/availability?${qs.toString()}`);
+    const res = await fetch(
+      `${API_BASE}/products/${productId}/availability?${qs.toString()}`,
+      withSessionHeaders()
+    );
     if (!res.ok) throw new Error(`GET /availability ${res.status}`);
     return res.json();
   },
 
   async getRecommendations(params = {}) {
     const qs = new URLSearchParams(params);
-    const res = await fetch(`${API_BASE}/recommendations?${qs.toString()}`);
+    const res = await fetch(
+      `${API_BASE}/recommendations?${qs.toString()}`,
+      withSessionHeaders()
+    );
     if (!res.ok) throw new Error(`GET /recommendations ${res.status}`);
     return res.json();
   },
 
   async searchProducts(query, filters = {}) {
     const qs = new URLSearchParams({ q: query, ...filters });
-    const res = await fetch(`${API_BASE}/products?${qs.toString()}`);
+    const res = await fetch(
+      `${API_BASE}/products?${qs.toString()}`,
+      withSessionHeaders()
+    );
     if (!res.ok) throw new Error(`GET /products ${res.status}`);
     return res.json();
   }
@@ -96,40 +114,57 @@ export const productAPI = {
 // Cart API
 export const cartAPI = {
   async getCart() {
-    const res = await fetch(`${API_BASE}/cart`, { credentials: 'include' });
+    const res = await fetch(`${API_BASE}/cart`, withSessionHeaders({ credentials: 'include' }));
     if (!res.ok) throw new Error(`GET /cart ${res.status}`);
     return res.json();
   },
 
   // Add item to cart
   async addToCart(productId, size, color, quantity = 1) {
-    const res = await fetch(`${API_BASE}/cart/items`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ product_id: productId, size, color, quantity })
-    });
+    const payload = { product_id: productId, size, color, quantity };
+    const headers = { 'Content-Type': 'application/json' };
+    const res = await fetch(
+      `${API_BASE}/cart/items`,
+      withSessionHeaders({
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      })
+    );
     if (!res.ok) throw new Error(`POST /cart/items ${res.status}`);
     return res.json();
   },
 
   // Remove item from cart
   async removeFromCart(itemId) {
-    const res = await fetch(`${API_BASE}/cart/items/${itemId}`, { method: 'DELETE' });
+    const res = await fetch(
+      `${API_BASE}/cart/items/${itemId}`,
+      withSessionHeaders({ method: 'DELETE' })
+    );
     if (!res.ok) throw new Error(`DELETE /cart/items ${res.status}`);
     return res.json();
   },
 
   // Update cart item quantity
   async updateQuantity(itemId, quantity) {
-    const res = await fetch(`${API_BASE}/cart/items/${itemId}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ quantity })
-    });
+    const res = await fetch(
+      `${API_BASE}/cart/items/${itemId}`,
+      withSessionHeaders({
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity }),
+      })
+    );
     if (!res.ok) throw new Error(`PUT /cart/items ${res.status}`);
     return res.json();
   },
 
   // Clear entire cart
   async clearCart() {
-    const res = await fetch(`${API_BASE}/cart/clear`, { method: 'POST' });
+    const res = await fetch(
+      `${API_BASE}/cart/clear`,
+      withSessionHeaders({ method: 'POST' })
+    );
     if (!res.ok) throw new Error(`POST /cart/clear ${res.status}`);
     return res.json();
   }
@@ -138,15 +173,22 @@ export const cartAPI = {
 // Voice/AI API
 export const voiceAPI = {
   async processVoiceCommand(text, context = {}, sessionId) {
-    const payload = { text, context };
-    if (sessionId) payload.session_id = sessionId;
+    const payload = { text, context: context || {} };
+    const resolvedSessionId = sessionId || payload.context?.session_id || getSessionId();
+    if (resolvedSessionId) {
+      payload.session_id = resolvedSessionId;
+      payload.context = { ...payload.context, session_id: resolvedSessionId };
+    }
 
-    const res = await fetch(`${API_BASE}/voice/command`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(payload)
-    });
+    const res = await fetch(
+      `${API_BASE}/voice/command`,
+      withSessionHeaders({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      })
+    );
     if (!res.ok) throw new Error(`POST /voice/command ${res.status}`);
     return res.json();
   }

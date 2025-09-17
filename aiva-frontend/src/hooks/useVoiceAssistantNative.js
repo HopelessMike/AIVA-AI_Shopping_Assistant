@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createWebSocketConnection, productAPI, infoAPI, voiceAPI } from '../services/api';
+import { getSessionId } from '../utils/session';
 
 import { useCart } from './useCart';
 import { buildCartSpeechSummary } from './useCart';
@@ -32,7 +33,10 @@ export const useVoiceAssistantNative = () => {
   const { setSearchQuery, filterProducts, setMultipleFilters, clearFilters } = useStore();
 
   const wsRef = useRef(null);
-  const sessionIdRef = useRef(`session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`);
+  const persistentSessionId = typeof window !== 'undefined' ? getSessionId() : null;
+  const sessionIdRef = useRef(
+    persistentSessionId || `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+  );
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const recognitionRef = useRef(null);
@@ -97,6 +101,7 @@ export const useVoiceAssistantNative = () => {
   const beepedThisSessionRef = useRef(false);
   const closingTimerRef = useRef(null);
   const turnLockRef = useRef(false);
+  const ackHistoryRef = useRef({});
 
   const NAV_ACK_DEFAULT = [
     "Ecco.",
@@ -152,6 +157,16 @@ export const useVoiceAssistantNative = () => {
     "Vuoto.",
     "Fatto."
   ];
+
+  const pickAck = useCallback((key, messages = [], fallback = '') => {
+    const options = Array.isArray(messages) ? messages.filter(Boolean) : [];
+    if (options.length === 0) return fallback;
+    const last = ackHistoryRef.current[key];
+    const pool = options.filter(msg => msg !== last);
+    const choice = randomFrom(pool.length > 0 ? pool : options) || fallback || options[0];
+    ackHistoryRef.current[key] = choice;
+    return choice || fallback;
+  }, []);
 
   const clearListeningTimers = useCallback(() => {
     if (listeningTimerRef.current) { clearTimeout(listeningTimerRef.current); listeningTimerRef.current = null; }
@@ -527,10 +542,10 @@ export const useVoiceAssistantNative = () => {
           streamBufferRef.current = '';
           dropStaleResponsesRef.current = false;
           const navAck = path === '/cart'
-            ? randomFrom(NAV_ACK_CART)
+            ? pickAck('nav-cart', NAV_ACK_CART, 'Ecco il carrello.')
             : path === '/offers'
-              ? randomFrom(NAV_ACK_OFFERS)
-              : randomFrom(NAV_ACK_DEFAULT);
+              ? pickAck('nav-offers', NAV_ACK_OFFERS, 'Ecco le offerte.')
+              : pickAck('nav-default', NAV_ACK_DEFAULT, 'Ecco.');
           // conferma breve + rilascio turno in onEnd
           speak(
             navAck || 'Ecco!',
@@ -583,7 +598,7 @@ export const useVoiceAssistantNative = () => {
             }, 500);
           }
           // Ack e rilascio del turno al termine
-          speak(randomFrom(SEARCH_ACK_MESSAGES) || 'Ecco!', () => {
+          speak(pickAck('search', SEARCH_ACK_MESSAGES, 'Ecco i risultati.'), () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -599,7 +614,7 @@ export const useVoiceAssistantNative = () => {
           } else {
             applyUIFilters(parameters.filters || {});
           }
-          speak(randomFrom(FILTER_ACK_MESSAGES) || 'Fatto.', () => {
+          speak(pickAck('filters', FILTER_ACK_MESSAGES, 'Filtri applicati.'), () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -610,7 +625,7 @@ export const useVoiceAssistantNative = () => {
           const productId = parameters.product_id;
           console.log('📦 Showing product:', productId);
           navigate(`/products/${productId}`);
-          speak(randomFrom(PRODUCT_ACK_MESSAGES) || 'Ecco!', () => {
+          speak(pickAck('product', PRODUCT_ACK_MESSAGES, 'Ecco la scheda.'), () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -691,7 +706,7 @@ export const useVoiceAssistantNative = () => {
                 parameters.quantity || 1
               );
             }
-            speak(randomFrom(CART_ADD_ACK_MESSAGES) || 'Aggiunto al carrello.', () => {
+            speak(pickAck('cart-add', CART_ADD_ACK_MESSAGES, 'Aggiunto al carrello.'), () => {
               setIsProcessing(false); isProcessingRef.current = false;
               turnLockRef.current = false;
               if (restartListeningRef.current) restartListeningRef.current();
@@ -722,7 +737,7 @@ export const useVoiceAssistantNative = () => {
           console.log('🗑️ Removing from cart:', id || item_id);
           if (id) {
             await removeFromCart(id);
-            speak(randomFrom(CART_REMOVE_ACK_MESSAGES) || 'Rimosso dal carrello.');
+            speak(pickAck('cart-remove', CART_REMOVE_ACK_MESSAGES, 'Rimosso dal carrello.'));
           } else {
             speak('Non trovo quel prodotto nel carrello. Puoi ripetere il nome o dirmi la taglia e il colore?');
           }
@@ -745,7 +760,7 @@ export const useVoiceAssistantNative = () => {
         case 'view_cart':
           console.log('🛒 Opening cart');
           navigate('/cart');
-          speak(randomFrom(NAV_ACK_CART) || 'Ecco il carrello.', () => {
+          speak(pickAck('nav-cart', NAV_ACK_CART, 'Ecco il carrello.'), () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -755,7 +770,7 @@ export const useVoiceAssistantNative = () => {
         case 'clear_cart':
           console.log('🗑️ Clearing cart');
           await clearCartAction();
-          speak(randomFrom(CART_CLEAR_ACK_MESSAGES) || 'Carrello svuotato.', () => {
+          speak(pickAck('cart-clear', CART_CLEAR_ACK_MESSAGES, 'Carrello svuotato.'), () => {
             setIsProcessing(false); isProcessingRef.current = false;
             turnLockRef.current = false;
             if (restartListeningRef.current) restartListeningRef.current();
@@ -892,8 +907,8 @@ export const useVoiceAssistantNative = () => {
           }
         }, 200); // ⬅️ più reattivo
     }
-  }, [navigate, addToCart, removeFromCart, clearCartAction, removeLastItem, updateQuantity, 
-      setSearchQuery, setMultipleFilters, isSpeaking]);
+  }, [navigate, addToCart, removeFromCart, clearCartAction, removeLastItem, updateQuantity,
+      setSearchQuery, setMultipleFilters, isSpeaking, pickAck]);
 
   // Now define drainFunctionQueue after executeFunction to avoid TDZ
   const drainFunctionQueue = useCallback(() => {
@@ -1012,6 +1027,14 @@ export const useVoiceAssistantNative = () => {
         // Show interim results
         if (interimTranscript) {
           setTranscript(interimTranscript);
+          if (listeningTimerRef.current) {
+            clearTimeout(listeningTimerRef.current);
+            listeningTimerRef.current = null;
+          }
+          if (closingTimerRef.current) {
+            clearTimeout(closingTimerRef.current);
+            closingTimerRef.current = null;
+          }
         }
 
         if (finalTranscript) {
@@ -1205,6 +1228,7 @@ export const useVoiceAssistantNative = () => {
     conversationHistoryRef.current = [];
     assistantTurnBufferRef.current = '';
     lastAssistantHistoryRef.current = '';
+    ackHistoryRef.current = {};
 
     console.log('✅ Assistant stopped');
   }, []);
@@ -1732,7 +1756,18 @@ export const useVoiceAssistantNative = () => {
     const goHome = /(torna|vai).*(home|pagina iniziale)|^home$/;
     // escludi frasi che contengono "carrello"
     const goProducts = /((apri|mostra|vai|portami).*(pagina\s+)?prodotti(?!.*carrello))|^tutti i prodotti$|^prodotti$|^catalogo$|^mostra tutto$|^mostrami tutto$/;
-    const describe = /^(descrivi|descrizione|dettagli|info( prodotto)?)$/;
+    const describeTriggers = [
+      /descrivimi/i,
+      /descrivilo/i,
+      /descrivila/i,
+      /descriv[iy]/i,
+      /descrizione/i,
+      /dettagli/i,
+      /informazioni?(?: sul| del)? prodotto/i,
+      /leggi .*descrizione/i,
+      /dimmi .*descrizione/i,
+      /mostra .*descrizione/i
+    ];
     // includi anche “mostra i prodotti nel carrello”
     const readCart = /(elenca|leggi|dimmi|quali|mostra).*(prodotti|articoli).*(nel\s+)?carrello|cosa.*(c\s'?|è|ho).*(nel\s+)?carrello/;
     // 🗑️ svuota/rimuovi tutto dal carrello (locale)
@@ -1742,7 +1777,7 @@ export const useVoiceAssistantNative = () => {
     // parsing “aggiungi/metti nel carrello … taglia X … colore Y”
     const addToCartRe = /(aggiungi|metti|mettilo|mettila).*(nel\s+)?carrello(?::|\s|\,)*(?:.*?(taglia)\s+([xslm]{1,3}|xs|xxs|xl|xxl|s|m|l))?(?:.*?(colore)\s+([a-zà-ù\s]+))?/i;
     const sizeMap = { xs:'XS', xxs:'XXS', s:'S', m:'M', l:'L', xl:'XL', xxl:'XXL' };
-    const colorMap = {
+  const colorMap = {
       'nero':'nero', 'black':'nero',
       'bianco':'bianco', 'white':'bianco',
       'blu':'blu', 'blu navy':'blu navy', 'navy':'blu navy', 'blu scuro':'blu navy',
@@ -1757,11 +1792,62 @@ export const useVoiceAssistantNative = () => {
       'giallo':'giallo',
       'viola':'viola'
     };
+    const quantityWords = {
+      uno: 1,
+      una: 1,
+      un: 1,
+      due: 2,
+      tre: 3,
+      quattro: 4,
+      cinque: 5,
+      sei: 6,
+      sette: 7,
+      otto: 8,
+      nove: 9,
+      dieci: 10
+    };
     const canonColor = (raw='') => {
       const s = raw.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().trim();
       const keys = Object.keys(colorMap).sort((a,b)=>b.length-a.length);
       for (const k of keys) if (s.includes(k)) return colorMap[k];
       return s || undefined;
+    };
+    const extractColorCandidates = (raw = '') => {
+      const normalized = raw.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase();
+      if (!normalized) return [];
+      const keys = Object.keys(colorMap).sort((a,b)=>b.length-a.length);
+      const found = [];
+      let working = normalized;
+      for (const key of keys) {
+        if (working.includes(key)) {
+          const mapped = colorMap[key];
+          if (!found.includes(mapped)) {
+            found.push(mapped);
+          }
+          working = working.replace(key, ' ');
+        }
+      }
+      return found;
+    };
+    const parseQuantityFromText = (input = '') => {
+      const normalized = input
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '')
+        .toLowerCase();
+      const commandMatch = normalized.match(/(?:aggiungi|aggiungine|metti|mettimene|mettil[oa])(.*)/);
+      const scope = commandMatch ? commandMatch[1] : normalized;
+      const digitMatch = scope.match(/(\d{1,2})\s*(?:pezzi|articoli|prodotti|paia|capi)?/);
+      if (digitMatch) {
+        const parsed = parseInt(digitMatch[1], 10);
+        if (!Number.isNaN(parsed)) return parsed;
+      }
+      for (const [word, value] of Object.entries(quantityWords)) {
+        const regex = new RegExp(`\\b${word}\\b`, 'i');
+        if (regex.test(scope)) {
+          return value;
+        }
+      }
+      return null;
     };
     if (goCart.test(lower)) {
       turnLockRef.current = true;
@@ -1811,8 +1897,15 @@ export const useVoiceAssistantNative = () => {
       drainFunctionQueue();
       return;
     }
+    const shouldDescribeProduct = () => {
+      if (!window.currentProductContext?.description_text) return false;
+      if (describeTriggers.some((re) => re.test(lower))) return true;
+      if (lower.includes('descrizione') && (lower.includes('prodotto') || lower.includes('articolo'))) return true;
+      if (lower.includes('descrivi') && (lower.includes('prodotto') || lower.includes('articolo'))) return true;
+      return false;
+    };
     // ✅ descrizione locale senza domande aggiuntive
-    if (describe.test(lower) && window.currentProductContext?.description_text) {
+    if (shouldDescribeProduct()) {
       turnLockRef.current = true;
       setIsProcessing(true); isProcessingRef.current = true;
       const name = window.currentProductContext.name || 'prodotto';
@@ -1829,13 +1922,31 @@ export const useVoiceAssistantNative = () => {
       const m2 = text.match(addToCartRe);
       const rawSize = (m2?.[3] || '').toLowerCase();
       const rawColor = (m2?.[4] || '').toLowerCase();
-      const size = sizeMap[rawSize] || undefined;
-      const color = canonColor(rawColor) || undefined;
+      const availableVariants = Array.isArray(window.currentProductContext?.variants)
+        ? window.currentProductContext.variants
+        : [];
+      const fallbackSize = availableVariants[0]?.size || 'M';
+      const fallbackColor = availableVariants[0]?.color || 'nero';
+      const size = (sizeMap[rawSize] || fallbackSize || 'M').toUpperCase();
+      const colorCandidates = extractColorCandidates(rawColor);
+      const availableColors = new Set(availableVariants.map(v => (v.color || '').toLowerCase()));
+      let color = colorCandidates.find(c => availableColors.has(c.toLowerCase()))
+        || colorCandidates[0]
+        || canonColor(rawColor)
+        || fallbackColor
+        || 'nero';
+      const requestedQuantity = parseQuantityFromText(text);
+      const safeQuantity = Math.min(10, Math.max(1, requestedQuantity || 1));
       turnLockRef.current = true;
       setIsProcessing(true); isProcessingRef.current = true;
       functionQueueRef.current.push({
         name: 'add_to_cart',
-        params: { product_id: window.currentProductContext.id, size: size || 'M', color: color || 'nero', quantity: 1 }
+        params: {
+          product_id: window.currentProductContext.id,
+          size,
+          color,
+          quantity: safeQuantity
+        }
       });
       drainFunctionQueue();
       return;
