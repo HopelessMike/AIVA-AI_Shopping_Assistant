@@ -1,8 +1,19 @@
 // src/services/api.js - API Service for Backend Integration
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ||
-  (typeof window !== 'undefined' && window.__API_BASE__) ||
-  'http://localhost:8000/api';
+const deriveApiBase = () => {
+  const direct = import.meta.env.VITE_API_BASE_URL;
+  if (direct) return direct.replace(/\/+$/, '');
+
+  const backend = import.meta.env.VITE_BACKEND_URL;
+  if (backend) return `${backend.replace(/\/+$/, '')}/api`;
+
+  if (typeof window !== 'undefined' && window.__API_BASE__) {
+    return String(window.__API_BASE__).replace(/\/+$/, '');
+  }
+
+  return 'http://localhost:8000/api';
+};
+
+const API_BASE = deriveApiBase();
 
 // Product API
 export const productAPI = {

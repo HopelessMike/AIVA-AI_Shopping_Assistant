@@ -46,9 +46,15 @@ try {
 
   if (!backendBase) throw new Error('Host backend non determinabile');
 
+  const wsBase = backendBase.startsWith('https')
+    ? backendBase.replace(/^https/i, 'wss')
+    : backendBase.replace(/^http/i, 'ws');
+
   const out =
+    `VITE_BACKEND_URL=${backendBase}\n` +
     `VITE_API_BASE_URL=${backendBase}/api\n` +
     `VITE_ASSETS_BASE_URL=${backendBase}/static/images\n` +
+    `VITE_WS_URL=${wsBase}\n` +
     `VITE_VERCEL_MODE=true\n`;
 
   writeFileSync('.env.local', out, 'utf8');

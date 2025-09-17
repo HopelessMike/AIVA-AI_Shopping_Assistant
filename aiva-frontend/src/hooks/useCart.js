@@ -3,7 +3,21 @@ import { useState, useCallback, useEffect } from 'react';
 import useStore from '../store';
 import axios from 'axios';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+const deriveBackendUrl = () => {
+  const fromBackend = import.meta.env.VITE_BACKEND_URL;
+  if (fromBackend) return fromBackend.replace(/\/+$/, '');
+
+  const fromApi = import.meta.env.VITE_API_BASE_URL;
+  if (fromApi) return fromApi.replace(/\/?api\/?$/, '');
+
+  if (typeof window !== 'undefined' && window.__API_BASE__) {
+    return String(window.__API_BASE__).replace(/\/?api\/?$/, '');
+  }
+
+  return 'http://localhost:8000';
+};
+
+const BACKEND_URL = deriveBackendUrl();
 
 // Helpers per snapshot carrello
 export function normalizeKey(s) {

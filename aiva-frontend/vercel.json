@@ -1,1 +1,7 @@
-{ "relatedProjects": ["prj_ZsEMrOp7JiPYDdgCa6RSeqWJdcmg"] }
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ],
+  "relatedProjects": ["prj_ZsEMrOp7JiPYDdgCa6RSeqWJdcmg"]
+}
