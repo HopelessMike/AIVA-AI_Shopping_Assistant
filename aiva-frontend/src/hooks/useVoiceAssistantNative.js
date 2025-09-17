@@ -70,6 +70,7 @@ export const useVoiceAssistantNative = () => {
   const isIOSDevice = isBrowser && /iP(ad|hone|od)/i.test(navigator.userAgent);
   const isSafari = isBrowser && /Safari/i.test(navigator.userAgent) && !/Chrome|CriOS|Android/i.test(navigator.userAgent);
   const requiresUserGestureRecognition = isIOSDevice && isSafari;
+  const speechPrimedRef = useRef(false);
   // 🔊 Barge-in RMS
   const bargeInCtxRef = useRef(null);
   const bargeInStreamRef = useRef(null);
@@ -98,58 +99,58 @@ export const useVoiceAssistantNative = () => {
   const turnLockRef = useRef(false);
 
   const NAV_ACK_DEFAULT = [
-    "Eccoci qua!",
-    "Perfetto, ti porto subito lì.",
-    "Arriviamo immediatamente.",
-    "Va bene, apriamo questa sezione."
+    "Ecco.",
+    "Subito.",
+    "Fatto.",
+    "Ci siamo."
   ];
   const NAV_ACK_CART = [
-    "Ecco il carrello con ciò che hai scelto.",
-    "Ti mostro subito il tuo carrello.",
-    "Qui trovi i tuoi articoli in carrello.",
-    "Carrello aperto, diamo un'occhiata."
+    "Ecco il carrello.",
+    "Carrello aperto.",
+    "Tieni il carrello.",
+    "Pronto."
   ];
   const NAV_ACK_OFFERS = [
-    "Ecco le offerte del momento.",
-    "Ti porto subito tra le promozioni.",
-    "Ecco gli sconti attivi ora.",
-    "Ecco a te le proposte in saldo."
+    "Ecco le offerte.",
+    "Sconti in vista.",
+    "Promozioni aperte.",
+    "Offerte pronte."
   ];
   const SEARCH_ACK_MESSAGES = [
-    "Ecco i risultati che ho trovato.",
-    "Perfetto, ho selezionato alcune proposte per te.",
-    "Dai un'occhiata a questi suggerimenti.",
-    "Ho filtrato il catalogo per te, spero ti piacciano."
+    "Ecco i risultati.",
+    "Ecco qui.",
+    "Pronto.",
+    "Fatto."
   ];
   const FILTER_ACK_MESSAGES = [
-    "Filtri applicati, il catalogo è aggiornato.",
-    "Perfetto, ho aggiornato la lista secondo le tue preferenze.",
-    "Ecco i prodotti con i filtri richiesti.",
-    "Tutto impostato come da indicazioni."
+    "Filtri applicati.",
+    "Lista aggiornata.",
+    "Pronto così.",
+    "Fatto." 
   ];
   const PRODUCT_ACK_MESSAGES = [
-    "Ti apro subito la scheda del prodotto.",
-    "Eccoci sulla scheda dettagliata.",
-    "Ti mostro immediatamente questo articolo.",
-    "Apriamo la pagina del prodotto così lo vedi meglio."
+    "Ecco la scheda.",
+    "Mostrato.",
+    "Eccolo qui.",
+    "Fatto." 
   ];
   const CART_ADD_ACK_MESSAGES = [
-    "Perfetto, aggiunto al carrello.",
-    "Articolo inserito nel carrello.",
-    "Fatto, il prodotto è nel tuo carrello.",
-    "Aggiunta completata, trovi tutto nel carrello."
+    "Aggiunto al carrello.",
+    "Fatto.",
+    "Inserito.",
+    "Dentro al carrello."
   ];
   const CART_REMOVE_ACK_MESSAGES = [
-    "Ok, l'ho tolto dal carrello.",
-    "Fatto, quel prodotto non è più nel carrello.",
-    "Rimosso! Ora il carrello è aggiornato.",
-    "Va bene, l'ho eliminato dal carrello."
+    "Tolto dal carrello.",
+    "Rimosso.",
+    "Fatto.",
+    "Via dal carrello."
   ];
   const CART_CLEAR_ACK_MESSAGES = [
     "Carrello svuotato.",
-    "Ho pulito il carrello, ora è vuoto.",
-    "Tutto rimosso, il carrello è di nuovo libero.",
-    "Ok, ho eliminato tutti gli articoli dal carrello."
+    "Tutto pulito.",
+    "Vuoto.",
+    "Fatto."
   ];
 
   const clearListeningTimers = useCallback(() => {
@@ -190,11 +191,38 @@ export const useVoiceAssistantNative = () => {
     } catch {}
   }, []);
 
+  const primeSpeechSynthesis = useCallback(() => {
+    if (!('speechSynthesis' in window)) return;
+    try {
+      if (speechPrimedRef.current) {
+        if (window.speechSynthesis.paused) {
+          try { window.speechSynthesis.resume(); } catch {}
+        }
+        return;
+      }
+      speechPrimedRef.current = true;
+      const silent = new SpeechSynthesisUtterance(' ');
+      silent.volume = 0;
+      silent.rate = 1;
+      silent.pitch = 1;
+      silent.onend = () => {
+        try { window.speechSynthesis.cancel(); } catch {}
+      };
+      window.speechSynthesis.speak(silent);
+    } catch (err) {
+      speechPrimedRef.current = false;
+      console.warn('Speech synthesis prime failed', err);
+    }
+  }, []);
+
   const resumeAudioPipeline = useCallback(async () => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
-        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new AudioCtx();
+        }
+        if (audioCtxRef.current?.state === 'suspended') {
           await audioCtxRef.current.resume();
         }
         if (bargeInCtxRef.current && bargeInCtxRef.current.state === 'suspended') {
@@ -202,12 +230,16 @@ export const useVoiceAssistantNative = () => {
         }
       }
       if (typeof window.speechSynthesis !== 'undefined') {
-        try { window.speechSynthesis.resume(); } catch {}
+        if (window.speechSynthesis.paused) {
+          try { window.speechSynthesis.resume(); } catch {}
+        }
+        primeSpeechSynthesis();
       }
     } catch (err) {
+      speechPrimedRef.current = false;
       console.warn('Audio pipeline resume failed', err);
     }
-  }, []);
+  }, [primeSpeechSynthesis]);
 
   // 🔊 Avvio/stop monitor barge-in: interrompe TTS se rileva voce per ~200ms
   const startBargeInMonitor = useCallback(async () => {
@@ -950,10 +982,10 @@ export const useVoiceAssistantNative = () => {
       // NON azzerare la finestra se è un riavvio nella stessa sessione
       if (!listeningTimerRef.current) {
         listeningTimerRef.current = setTimeout(() => {
-          if (!isSpeaking && !isProcessingRef.current) {
+          if (!isSpeakingRef.current && !isProcessingRef.current) {
             speak(NO_INPUT_MESSAGES[Math.floor(Math.random()*NO_INPUT_MESSAGES.length)], () => {
               closingTimerRef.current = setTimeout(() => {
-                if (!isSpeaking && !isProcessingRef.current) {
+                if (!isSpeakingRef.current && !isProcessingRef.current) {
                   stopAssistant();
                 }
               }, CLOSING_GRACE_MS);
@@ -1020,8 +1052,8 @@ export const useVoiceAssistantNative = () => {
       setIsListening(false);
       if (
         isAssistantActiveRef.current &&
-        !isSpeaking &&
-        !isExecutingFunction &&
+        !isSpeakingRef.current &&
+        !isExecutingFunctionRef.current &&
         !isRestartingRef.current &&
         !isProcessingRef.current &&
         !window.speechSynthesis.speaking &&
@@ -1029,22 +1061,26 @@ export const useVoiceAssistantNative = () => {
         !closingTimerRef.current &&
         functionQueueRef.current.length === 0
       ) {
+        resumeAudioPipeline();
+        const restartDelay = isIOSDevice ? 250 : 500;
         setTimeout(() => {
           if (
             isAssistantActiveRef.current &&
-            !isSpeaking &&
+            !isSpeakingRef.current &&
             !isProcessingRef.current &&
             !turnLockRef.current &&
             !closingTimerRef.current
           ) {
-            restartListening();
+            if (restartListeningRef.current) {
+              restartListeningRef.current();
+            }
           }
-        }, 500);
+        }, restartDelay);
       }
     };
 
     return recognition;
-  }, [isSpeaking, isUserTurn, isExecutingFunction]);
+  }, [resumeAudioPipeline, isIOSDevice]);
 
   // ✅ RESTART LISTENING CORRETTO - PREVIENE LOOP
   const restartListening = useCallback(() => {
@@ -1311,6 +1347,7 @@ export const useVoiceAssistantNative = () => {
     const { enqueue = false } = options || {};
     if (!('speechSynthesis' in window)) return;
     try {
+      resumeAudioPipeline();
       // assicurati che il mic sia off durante TTS
       safeStopRecognition();
       setIsSpeaking(true);
@@ -1379,7 +1416,7 @@ export const useVoiceAssistantNative = () => {
         }, 1500);
       }
     } catch {}
-  }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle]);
+  }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle, resumeAudioPipeline]);
 
   const flushStreamedSpeech = useCallback((force = false) => {
     const raw = (streamSentenceBufferRef.current || '').replace(/\s+/g, ' ').trim();
@@ -1510,6 +1547,11 @@ export const useVoiceAssistantNative = () => {
           const lowerLast = (lastUserTextRef.current || '').toLowerCase();
           const isCartContext = /(carrello|svuota|rimuovi|togli|elenca|prodotti nel carrello)/.test(lowerLast);
           if (isCartContext && data.function === 'navigate_to_page' && data.parameters?.page === 'prodotti') {
+            break;
+          }
+          const ackOnly = /^(sì|si|ok|va bene|perfetto|d'accordo|come no|certo|ottimo|grazie|no grazie|basta cos[ìi]|tutto ok|tutto bene|va benissimo|benissimo)[!.\s]*$/.test(lowerLast.trim());
+          if (ackOnly && ['navigate_to_page', 'navigate', 'search_products', 'get_product_details'].includes(data.function)) {
+            console.log('⏭️ Ignoro funzione non richiesta dopo conferma breve');
             break;
           }
           functionQueueRef.current.push({ name: data.function, params: data.parameters });
