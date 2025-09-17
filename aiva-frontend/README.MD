@@ -17,6 +17,7 @@ Modern, responsive React frontend for AIVA Fashion - an AI-powered voice shoppin
 - 🗣️ **Streaming fluido**: L'audio sintetizzato ricompone le frasi, le livella nel volume e le legge senza l'effetto "token-by-token".
 - 🎙️ **Microfono sempre attivo**: Dopo ogni risposta locale (es. riepilogo carrello) il lock vocale viene rilasciato e l'assistente torna subito in ascolto.
 
+
 ### E-commerce Features
 - 🛍️ **Product Catalog**: 30+ fashion items with variants
 - 🎯 **Smart Search**: Voice-activated product search
