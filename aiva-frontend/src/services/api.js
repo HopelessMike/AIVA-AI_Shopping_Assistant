@@ -1,8 +1,54 @@
 // src/services/api.js - API Service for Backend Integration
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ||
-  (typeof window !== 'undefined' && window.__API_BASE__) ||
-  'http://localhost:8000/api';
+const deriveApiBase = () => {
+  const direct = import.meta.env.VITE_API_BASE_URL;
+  if (direct) return direct.replace(/\/+$/, '');
+
+  const backend = import.meta.env.VITE_BACKEND_URL;
+  if (backend) return `${backend.replace(/\/+$/, '')}/api`;
+
+  if (typeof window !== 'undefined' && window.__API_BASE__) {
+    return String(window.__API_BASE__).replace(/\/+$/, '');
+  }
+
+  return 'http://localhost:8000/api';
+};
+
+const API_BASE = deriveApiBase();
+const API_ROOT = API_BASE.replace(/\/api$/, '');
+
+const buildApiUrl = (endpoint = '') => {
+  if (!endpoint) return API_BASE;
+  if (endpoint.startsWith('http')) return endpoint;
+  const base = API_BASE.endsWith('/') ? API_BASE.slice(0, -1) : API_BASE;
+  const normalized = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+  return `${base}/${normalized}`;
+};
+
+const fetchJson = async (endpoint, options = {}) => {
+  const url = buildApiUrl(endpoint);
+  const res = await fetch(url, {
+    credentials: options.credentials ?? 'include',
+    ...options,
+  });
+  if (!res.ok) {
+    throw new Error(`${options.method || 'GET'} ${url} ${res.status}`);
+  }
+  return res.json();
+};
+
+const fetchRootJson = async (endpoint, options = {}) => {
+  const url = endpoint.startsWith('http')
+    ? endpoint
+    : `${API_ROOT.replace(/\/+$/, '')}/${endpoint.replace(/^\//, '')}`;
+  const res = await fetch(url, {
+    credentials: options.credentials ?? 'include',
+    ...options,
+  });
+  if (!res.ok) {
+    throw new Error(`${options.method || 'GET'} ${url} ${res.status}`);
+  }
+  return res.json();
+};
 
 // Product API
 export const productAPI = {
@@ -105,35 +151,19 @@ export const voiceAPI = {
 export const infoAPI = {
   // Get size guide
   getSizeGuide: async (category) => {
-    try {
-      const response = await api.get(`/api/size-guide/${category}`);
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching size guide:', error);
-      throw error;
-    }
+    return fetchJson(`/size-guide/${encodeURIComponent(category)}`, {
+      credentials: 'omit',
+    });
   },
 
   // Get shipping info
   getShippingInfo: async () => {
-    try {
-      const response = await api.get('/api/shipping-info');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching shipping info:', error);
-      throw error;
-    }
+    return fetchJson('/shipping-info', { credentials: 'omit' });
   },
 
   // Get current promotions
   getPromotions: async () => {
-    try {
-      const response = await api.get('/api/promotions');
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching promotions:', error);
-      throw error;
-    }
+    return fetchJson('/promotions', { credentials: 'omit' });
   }
 };
 
@@ -149,13 +179,7 @@ export function createWebSocketConnection(sessionId) {
 
 // Health check
 export const healthCheck = async () => {
-  try {
-    const response = await api.get('/health');
-    return response.data;
-  } catch (error) {
-    console.error('Health check failed:', error);
-    throw error;
-  }
+  return fetchRootJson('/health', { credentials: 'omit' });
 };
 
 // Mock data functions for fallback

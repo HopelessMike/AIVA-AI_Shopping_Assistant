@@ -49,20 +49,23 @@ FUNZIONI DISPONIBILI (USA SEMPRE):
    
 10. get_current_promotions: Promozioni attive
 
-11. apply_ui_filters: Applica filtri nell'interfaccia utente
+11. get_shipping_info: Costi, tempistiche e opzioni di consegna
+
+12. apply_ui_filters: Applica filtri nell'interfaccia utente
     - Usa per applicare filtri visibili nella pagina prodotti
-    
-12. remove_last_cart_item: Rimuovi ultimo articolo aggiunto
 
-13. update_cart_quantity: Modifica quantità nel carrello
+13. remove_last_cart_item: Rimuovi ultimo articolo aggiunto
 
-14. close_conversation: Chiudi conversazione quando richiesto
+14. update_cart_quantity: Modifica quantità nel carrello
+
+15. close_conversation: Chiudi conversazione quando richiesto
 
 REGOLE IMPORTANTI:
 - Quando l'utente chiede di vedere prodotti specifici, USA SEMPRE search_products con filters appropriati
 - Per "scarpe da uomo" usa: search_products(query="scarpe", filters={"gender": "uomo"})
 - Per "felpe nere" usa: search_products(query="felpa", filters={"color": "nero"})
 - Per "offerte" usa: search_products(query="", filters={"on_sale": true})
+- Per domande su spedizioni, consegne o costi di invio usa SEMPRE get_shipping_info
 - SEMPRE naviga prima alla pagina prodotti quando cerchi
 - APPLICA sempre i filtri UI dopo la ricerca con apply_ui_filters
 
@@ -246,6 +249,11 @@ class SecureAIService:
             {
                 "name": "get_current_promotions",
                 "description": "Mostra promozioni attive",
+                "parameters": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "get_shipping_info",
+                "description": "Mostra costi e tempistiche di spedizione",
                 "parameters": {"type": "object", "properties": {}}
             },
             {
@@ -670,7 +678,8 @@ class SecureAIService:
             "close_conversation": "A presto! È stato un piacere aiutarti.",
             "remove_from_cart": "Rimuovo dal carrello...",
             "remove_last_cart_item": "Rimuovo l'ultimo articolo...",
-            "update_cart_quantity": "Modifico la quantità..."
+            "update_cart_quantity": "Modifico la quantità...",
+            "get_shipping_info": "Recupero le informazioni di spedizione..."
         }
         return responses.get(function_name, "Un attimo...")
     
@@ -746,7 +755,8 @@ class SecureAIService:
             "close_conversation": "Grazie per aver usato AIVA. A presto!",
             "remove_from_cart": "Ho rimosso l'articolo dal carrello.",
             "remove_last_cart_item": "Ho rimosso l'ultimo articolo aggiunto.",
-            "update_cart_quantity": "Ho aggiornato la quantità."
+            "update_cart_quantity": "Ho aggiornato la quantità.",
+            "get_shipping_info": "Ti condivido i dettagli sulla spedizione."
         }
         
         message = messages.get(function_name, "Operazione completata.")
@@ -818,7 +828,15 @@ class SecureAIService:
                 "type": "response",
                 "message": "Per aggiungere al carrello, dimmi taglia e colore."
             }
-            
+
+        elif any(word in text_lower for word in ["spedizion", "consegna", "tempi di consegna", "costi di spedizione", "costo di spedizione"]):
+            yield {
+                "type": "function_complete",
+                "function": "get_shipping_info",
+                "parameters": {},
+                "message": "Ecco le informazioni aggiornate sulle spedizioni."
+            }
+
         elif any(word in text_lower for word in ["offerte", "in offerta", "sconti", "sconto", "saldi", "promozioni"]):
             # Vai alla pagina offerte
             yield {"type": "function_complete", "function": "navigate_to_page", "parameters": {"page": "offerte"}, "message": "Ti mostro le nostre offerte!"}

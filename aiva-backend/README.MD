@@ -86,6 +86,9 @@ Once the server is running, you can access:
 | `OPENAI_API_KEY` | OpenAI API key for AI processing | None (uses fallback) |
 | `OPENAI_MODEL` | Model to use | `gpt-4-turbo-preview` |
 | `ALLOWED_ORIGINS` | CORS allowed origins | `http://localhost:5173,http://localhost:3000` |
+| `FRONTEND_URL` / `PUBLIC_FRONTEND_URL` | Additional frontend origins automatically added to CORS | None |
+| `FRONTEND_VERCEL_URL` | Explicit Vercel domain to trust | None |
+| `ALLOWED_ORIGIN_REGEX` | Override/disable the default `https://*.vercel.app` allowance (`false` to disable) | `https://.*\\.vercel\\.app` |
 | `MAX_REQUESTS_PER_MINUTE` | General rate limit | `60` |
 | `MAX_AI_REQUESTS_PER_MINUTE` | AI endpoint rate limit | `10` |
 | `PORT` | Server port | `8000` |
@@ -115,15 +118,27 @@ To use full AI capabilities with streaming, add your OpenAI API key to the `.env
 
 ```
 aiva-backend/
-├── app.py                 # Main FastAPI application with fashion catalog
-├── ai_service.py         # OpenAI integration with Italian support
+├── api/index.py         # Serverless entrypoint for Vercel
+├── app.py               # Main FastAPI application with fashion catalog
+├── ai_service.py        # OpenAI integration with Italian support
 ├── run.py               # Server startup script
 ├── test_api.py          # API test suite
 ├── requirements.txt     # Python dependencies
-├── .env.example        # Environment variables template
-├── .env               # Your environment variables (create this)
-└── README.md          # This file
+├── .env.example         # Environment variables template
+├── .env                 # Your environment variables (create this)
+└── README.md            # This file
 ```
+
+### Vercel Deployment Notes
+
+- Imposta la **Root Directory** del progetto Vercel su `aiva-backend`.
+- Vercel utilizza `api/index.py` come entrypoint serverless e inoltra tutte le
+  richieste HTTP a FastAPI tramite la route definita in `vercel.json`.
+- Assicurati che le variabili di ambiente (es. `ALLOWED_ORIGINS`,
+  `OPENAI_API_KEY`, `PUBLIC_BASE_URL`) siano configurate nel progetto Vercel.
+- Non aggiungere ai `requirements.txt` moduli della standard library Python
+  (es. `asyncio`): Vercel li installerà come pacchetti di terze parti
+  incompatibili con Python 3.11 causando errori `SyntaxError` in runtime.
 
 ## 🔌 API Endpoints
 

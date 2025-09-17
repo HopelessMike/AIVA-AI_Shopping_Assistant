@@ -1,7 +1,7 @@
 // src/hooks/useVoiceAssistantNative.js - VERSIONE DEFINITIVA FIXATA
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createWebSocketConnection, productAPI } from '../services/api';
+import { createWebSocketConnection, productAPI, infoAPI } from '../services/api';
 import { useCart } from './useCart';
 import { buildCartSpeechSummary } from './useCart';
 import useStore from '../store';
@@ -64,7 +64,10 @@ export const useVoiceAssistantNative = () => {
   const NO_INPUT_MESSAGES = [
     "Se hai bisogno di altro, sono qui.",
     "Ok! Buon proseguimento, chiamami se ti serve aiuto.",
-    "Resto a disposizione se ti serve altro."
+    "Resto a disposizione se ti serve altro.",
+    "Quando vuoi riprendere, basta dirmelo.",
+    "Sono qui se ti viene in mente qualcos'altro da vedere.",
+    "Va bene, resto in ascolto per quando ti serve."
   ];
   const listeningTimerRef = useRef(null);
   const activeListenSessionIdRef = useRef(null);
@@ -193,13 +196,18 @@ export const useVoiceAssistantNative = () => {
       "Ciao! Sono AIVA, il tuo personal shopper AI. Come posso aiutarti oggi?",
       "Benvenuto! Sono qui per aiutarti a trovare l'outfit perfetto. Cosa stai cercando?",
       "Eccomi! Sono AIVA, dimmi cosa posso fare per te.",
-      "Ciao! Sono pronta ad assisterti con il tuo shopping. Di cosa hai bisogno?"
+      "Ciao! Sono pronta ad assisterti con il tuo shopping. Di cosa hai bisogno?",
+      "Piacere di rivederti da AIVA Boutique! Cosa esploriamo insieme?",
+      "Ben arrivato nella nostra vetrina digitale. Posso consigliarti qualcosa di speciale?"
     ];
-    
+
     const shortMessages = [
       "Eccomi di nuovo! Come posso aiutarti?",
       "Bentornato! Cosa cerchi oggi?",
-      "Sono qui! Dimmi cosa ti serve."
+      "Sono qui! Dimmi cosa ti serve.",
+      "Dimmi pure, sono tutta orecchi.",
+      "Hai voglia di dare un'occhiata a qualcosa di nuovo?",
+      "Pronta quando vuoi tu!"
     ];
     
     if (sessionCount === 0) {
@@ -596,7 +604,62 @@ export const useVoiceAssistantNative = () => {
             if (restartListeningRef.current) restartListeningRef.current();
           }, false, { enqueue: false });
           break;
-          
+
+        case 'get_shipping_info': {
+          console.log('🚚 Fetching shipping info');
+          try {
+            const info = await infoAPI.getShippingInfo();
+            const italyZone = (info.shipping_zones || []).find(z =>
+              (z.zone || '').toLowerCase().includes('italia') ||
+              (z.zone || '').toLowerCase().includes('penisola')
+            ) || info.shipping_zones?.[0];
+
+            const standard = italyZone?.standard || info.standard_shipping;
+            const express = italyZone?.express || info.express_shipping;
+            const pickup = info.pickup_point;
+
+            const parts = [];
+            if (info.free_shipping_threshold != null) {
+              parts.push(`spedizione gratuita sopra i €${Number(info.free_shipping_threshold).toFixed(2)}`);
+            }
+            if (standard) {
+              const price = typeof standard === 'object' ? standard.price : standard;
+              const eta = typeof standard === 'object' ? standard.delivery_window || standard.delivery_time : info.delivery_time_standard;
+              parts.push(`standard a €${Number(price).toFixed(2)} con consegna in ${eta || 'pochi giorni'}`);
+            }
+            if (express) {
+              const price = typeof express === 'object' ? express.price : express;
+              const eta = typeof express === 'object' ? express.delivery_window || express.delivery_time : info.delivery_time_express;
+              parts.push(`express a €${Number(price).toFixed(2)} con arrivo in ${eta || '1-2 giorni'}`);
+            }
+            if (pickup && pickup.enabled !== false) {
+              const pickupEta = pickup.delivery_window || pickup.delivery_time || '24 ore';
+              parts.push(`ritiro gratuito in boutique disponibile entro ${pickupEta}`);
+            }
+            if (info.saturday_delivery?.enabled) {
+              parts.push(`consegna il sabato a €${Number(info.saturday_delivery.price).toFixed(2)} su ${info.saturday_delivery.area}`);
+            }
+
+            const spoken = parts.length
+              ? `Ecco le nostre opzioni di spedizione: ${parts.join(', ')}.`
+              : 'Le nostre spedizioni sono attive, ma non riesco a recuperare tutti i dettagli in questo momento.';
+
+            speak(spoken, () => {
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            }, false, { enqueue: false });
+          } catch (err) {
+            console.error('Errore recuperando le spedizioni', err);
+            speak('Non riesco a recuperare le informazioni di spedizione ora, riprova tra qualche istante.', () => {
+              setIsProcessing(false); isProcessingRef.current = false;
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            }, false, { enqueue: false });
+          }
+          break;
+        }
+
         case 'get_recommendations':
           console.log('💡 Getting recommendations');
           navigate('/products');
