@@ -7,6 +7,7 @@ import re
 import logging
 import asyncio
 import random
+import unicodedata
 from typing import Dict, Any, Optional, List, AsyncGenerator, Tuple
 from datetime import datetime
 import openai
@@ -75,6 +76,8 @@ CONVERSAZIONE:
 - Mantieni risposte brevi e naturali
 - Se l'utente dice "basta", "chiudi", "esci" usa close_conversation
 - Suggerisci sempre prodotti complementari
+- Quando descrivi un prodotto racconta stile, materiali e occasioni d'uso in modo naturale
+- Cita soltanto velocemente taglie e colori disponibili senza enumerare scorte o combinazioni una per una
 
 MAPPING TERMINI:
 - maglia/maglietta → t-shirt
@@ -176,7 +179,12 @@ def detect_category_from_text(text_lower: str) -> Optional[Tuple[str, str]]:
 
 class SecureAIService:
     """Enhanced AI service with Italian support and improved function execution"""
-    
+
+    MULTI_ADD_PATTERN = re.compile(
+        r"(?:(\d+|un[oa]?|uno|due|tre|quattro|cinque|sei|sette|otto|nove|dieci)\s*(?:pezzi?|articoli?|capi|taglie?)?)?\s*taglia\s+([a-z0-9]+)(?:\s*(?:colore|in\s+colore)?\s*([a-zàèéìòù]+(?:\s+[a-zàèéìòù]+)?))?",
+        re.IGNORECASE,
+    )
+
     def __init__(self):
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
@@ -394,7 +402,7 @@ class SecureAIService:
         """Extract user preferences from text"""
         preferences = {}
         text_lower = text.lower()
-        
+
         # Extract size preferences
         sizes = ["xs", "s", "m", "l", "xl", "xxl"]
         for size in sizes:
@@ -425,8 +433,157 @@ class SecureAIService:
             if style in text_lower:
                 preferences["style"] = style
                 break
-        
+
         return preferences
+
+    @staticmethod
+    def _normalize_color_name(value: Optional[str]) -> str:
+        if not value:
+            return ""
+        normalized = unicodedata.normalize("NFKD", value)
+        normalized = normalized.encode("ascii", "ignore").decode("ascii")
+        normalized = re.sub(r"[^a-z0-9]+", " ", normalized.lower()).strip()
+        return normalized
+
+    @staticmethod
+    def _word_to_number(token: Optional[str]) -> Optional[int]:
+        if not token:
+            return None
+        token = token.strip().lower()
+        token = token.replace("l'", "").replace("un'", "un")
+        mapping = {
+            "un": 1, "uno": 1, "una": 1,
+            "due": 2, "tre": 3, "quattro": 4, "cinque": 5,
+            "sei": 6, "sette": 7, "otto": 8, "nove": 9, "dieci": 10,
+        }
+        if token.isdigit():
+            try:
+                value = int(token)
+                if value < 1:
+                    return 1
+                if value > 10:
+                    return 10
+                return value
+            except ValueError:
+                return None
+        return mapping.get(token)
+
+    @staticmethod
+    def _split_complete_sentences(buffer: str) -> Tuple[List[str], str]:
+        if not buffer:
+            return [], ""
+
+        normalized = re.sub(r"\s+", " ", buffer)
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
+
+        if len(sentences) == 1:
+            # No sentence-ending punctuation yet
+            if any(normalized.endswith(p) for p in (".", "!", "?")):
+                return [normalized.strip()], ""
+            return [], normalized
+
+        remainder = sentences[-1]
+        completed = [part.strip() for part in sentences[:-1] if part.strip()]
+
+        if remainder.strip().endswith((".", "!", "?")):
+            completed.append(remainder.strip())
+            remainder = ""
+
+        return completed, remainder
+
+    def parse_multi_add_request(
+        self,
+        text_lower: str,
+        product_context: Optional[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        if not product_context:
+            return [], []
+
+        if "taglia" not in text_lower:
+            return [], []
+
+        if not any(keyword in text_lower for keyword in [
+            "aggiung", "metti", "inserisc", "mettil", "metter"
+        ]):
+            return [], []
+
+        variants = product_context.get("variants") or []
+        if not variants:
+            return [], []
+
+        variant_lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        color_lookup: Dict[str, str] = {}
+
+        for variant in variants:
+            size_value = str(variant.get("size", "")).upper()
+            color_value = str(variant.get("color", ""))
+            norm_color = self._normalize_color_name(color_value)
+            if size_value and norm_color:
+                variant_lookup[(size_value, norm_color)] = variant
+            if norm_color and color_value:
+                color_lookup.setdefault(norm_color, color_value)
+
+        available_colors = [
+            color for color in (product_context.get("available_colors") or [])
+            if color
+        ]
+        if not available_colors:
+            available_colors = [variant.get("color") for variant in variants if variant.get("color")]
+
+        parsed: List[Dict[str, Any]] = []
+        issues: List[str] = []
+
+        for match in self.MULTI_ADD_PATTERN.finditer(text_lower):
+            qty_token, size_token, color_token = match.groups()
+            size_value = (size_token or "").strip().upper()
+            if not size_value:
+                continue
+
+            quantity = self._word_to_number(qty_token) if qty_token else 1
+            if not quantity:
+                quantity = 1
+
+            raw_color = (color_token or "").strip()
+            if raw_color:
+                raw_color = re.split(r"\b(?:e|ed|oppure|,|\.)\b", raw_color)[0].strip()
+
+            norm_color = self._normalize_color_name(raw_color)
+            resolved_color = color_lookup.get(norm_color) if norm_color else None
+
+            if not resolved_color:
+                if not norm_color and len(set(available_colors)) == 1:
+                    resolved_color = available_colors[0]
+                    norm_color = self._normalize_color_name(resolved_color)
+                elif not norm_color:
+                    issues.append(f"taglia {size_value} (specifica il colore)")
+                    continue
+                else:
+                    issues.append(f"taglia {size_value} colore {raw_color or ''}".strip())
+                    continue
+
+            variant = variant_lookup.get((size_value, norm_color))
+            if not variant or not variant.get("available", True):
+                issues.append(f"taglia {size_value} colore {resolved_color}")
+                continue
+
+            parsed.append({
+                "size": size_value,
+                "color": resolved_color,
+                "quantity": quantity,
+            })
+
+        if not parsed:
+            return [], issues
+
+        merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for item in parsed:
+            key = (item["size"], self._normalize_color_name(item["color"]))
+            if key not in merged:
+                merged[key] = dict(item)
+            else:
+                merged[key]["quantity"] += item["quantity"]
+
+        return list(merged.values()), issues
     
     async def process_voice_command_streaming(
         self, 
@@ -506,6 +663,45 @@ class SecureAIService:
         text_lower = (text or "").lower().strip()
         cp = context.get("current_product")
         visible = context.get("visible_products", [])
+
+        if cp and cp.get("id"):
+            multi_items, multi_issues = self.parse_multi_add_request(text_lower, cp)
+            if multi_items:
+                product_id = cp.get("id")
+                for item in multi_items:
+                    yield {"type": "function_start", "function": "add_to_cart"}
+                    yield {
+                        "type": "function_complete",
+                        "function": "add_to_cart",
+                        "parameters": {
+                            "product_id": product_id,
+                            "size": item["size"],
+                            "color": item["color"],
+                            "quantity": item["quantity"],
+                        },
+                    }
+
+                parts = []
+                for item in multi_items:
+                    qty = item["quantity"]
+                    qty_label = "pezzo" if qty == 1 else "pezzi"
+                    color_label = f" colore {item['color']}" if item.get("color") else ""
+                    parts.append(f"{qty} {qty_label} taglia {item['size']}{color_label}")
+
+                if len(parts) == 1:
+                    summary_body = parts[0]
+                elif len(parts) == 2:
+                    summary_body = " e ".join(parts)
+                else:
+                    summary_body = ", ".join(parts[:-1]) + " e " + parts[-1]
+
+                summary_message = f"Ho aggiunto {summary_body} al carrello."
+                if multi_issues:
+                    summary_message += " " + "Non ho trovato " + ", ".join(multi_issues) + "."
+
+                yield {"type": "response", "message": summary_message}
+                yield {"type": "complete", "message": None}
+                return
 
         # 0) "Mostra offerte / prodotti in offerta / sconti" → vai su offerte e filtra on_sale
         if any(k in text_lower for k in ["offerte", "in offerta", "sconti", "sconto", "saldi", "promozioni"]):
@@ -691,21 +887,23 @@ class SecureAIService:
                 temperature=self.temperature,
                 stream=True
             )
-            
+
             # Process streaming
-            function_call = None
             function_name = None
             function_args = ""
             response_text = ""
-            
-            emitted_text = False
+            function_call_detected = False
+            stream_started = False
+            sentence_buffer = ""
+            emitted_chunks = False
+
             async for chunk in stream:
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if not delta:
                     continue
-                
-                # Handle function calls
+
                 if delta.function_call:
+                    function_call_detected = True
                     if delta.function_call.name:
                         function_name = delta.function_call.name
                         yield {
@@ -713,14 +911,39 @@ class SecureAIService:
                             "function": function_name,
                             "message": self.get_quick_response(function_name, text)
                         }
-                    
+
                     if delta.function_call.arguments:
                         function_args += delta.function_call.arguments
-                
-                # Handle regular content (NO streaming verso il client)
+
                 elif delta.content:
                     response_text += delta.content
-            
+
+                    if function_call_detected:
+                        continue
+
+                    sentence_buffer += delta.content
+
+                    if sentence_buffer.strip() and not stream_started:
+                        stream_started = True
+                        yield {"type": "stream_start"}
+
+                    if stream_started:
+                        sentences, sentence_buffer = self._split_complete_sentences(sentence_buffer)
+                        for sentence in sentences:
+                            cleaned = sentence.strip()
+                            if cleaned:
+                                emitted_chunks = True
+                                yield {"type": "text_chunk", "content": cleaned}
+
+            if stream_started and sentence_buffer.strip():
+                cleaned = sentence_buffer.strip()
+                if cleaned:
+                    emitted_chunks = True
+                    yield {"type": "text_chunk", "content": cleaned}
+
+            if stream_started and emitted_chunks:
+                yield {"type": "stream_complete"}
+
             # Process complete function call
             if function_name:
                 try:
@@ -782,8 +1005,11 @@ class SecureAIService:
             
             # Invia una sola risposta testuale se non c'è function
             if not function_name and response_text.strip():
-                yield {"type": "response", "message": response_text.strip()}
-            
+                payload = {"type": "response", "message": response_text.strip()}
+                if emitted_chunks:
+                    payload["streamed"] = True
+                yield payload
+
             # Complete garantito sempre
             yield {
                 "type": "complete",
