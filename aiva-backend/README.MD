@@ -115,15 +115,24 @@ To use full AI capabilities with streaming, add your OpenAI API key to the `.env
 
 ```
 aiva-backend/
-├── app.py                 # Main FastAPI application with fashion catalog
-├── ai_service.py         # OpenAI integration with Italian support
+├── api/index.py         # Serverless entrypoint for Vercel
+├── app.py               # Main FastAPI application with fashion catalog
+├── ai_service.py        # OpenAI integration with Italian support
 ├── run.py               # Server startup script
 ├── test_api.py          # API test suite
 ├── requirements.txt     # Python dependencies
-├── .env.example        # Environment variables template
-├── .env               # Your environment variables (create this)
-└── README.md          # This file
+├── .env.example         # Environment variables template
+├── .env                 # Your environment variables (create this)
+└── README.md            # This file
 ```
+
+### Vercel Deployment Notes
+
+- Imposta la **Root Directory** del progetto Vercel su `aiva-backend`.
+- Vercel utilizza `api/index.py` come entrypoint serverless e inoltra tutte le
+  richieste HTTP a FastAPI tramite la route definita in `vercel.json`.
+- Assicurati che le variabili di ambiente (es. `ALLOWED_ORIGINS`,
+  `OPENAI_API_KEY`, `PUBLIC_BASE_URL`) siano configurate nel progetto Vercel.
 
 ## 🔌 API Endpoints
 
