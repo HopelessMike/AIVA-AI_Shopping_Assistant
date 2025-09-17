@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import useStore from '../store';
 import axios from 'axios';
+import { getSessionId, SESSION_HEADER } from '../utils/session';
 
 const deriveBackendUrl = () => {
   const fromBackend = import.meta.env.VITE_BACKEND_URL;
@@ -19,6 +20,11 @@ const deriveBackendUrl = () => {
 
 const BACKEND_URL = deriveBackendUrl();
 
+const getSessionHeaders = () => {
+  const sessionId = getSessionId();
+  return sessionId ? { [SESSION_HEADER]: sessionId } : {};
+};
+
 // Helpers per snapshot carrello
 export function normalizeKey(s) {
   return (s || '')
@@ -33,7 +39,9 @@ export function normalizeKey(s) {
 // Helper: sincronizza dallo stato canonico del server
 async function syncCartFromServer() {
   try {
-    const res = await axios.get(`${BACKEND_URL}/api/cart`);
+    const res = await axios.get(`${BACKEND_URL}/api/cart`, {
+      headers: getSessionHeaders()
+    });
     // Aggiorna lo store globale con il payload del backend
     const setCartFromServer = useStore.getState().setCartFromServer;
     if (typeof setCartFromServer === 'function') {
@@ -131,7 +139,8 @@ export const useCart = () => {
       const response = await axios.get(
         `${BACKEND_URL}/api/products/${product.id}/availability`,
         {
-          params: { size, color }
+          params: { size, color },
+          headers: getSessionHeaders()
         }
       );
       
@@ -144,12 +153,18 @@ export const useCart = () => {
       publishCartSnapshot(useStore.getState().cart);
 
       // Backend: add
-      await axios.post(`${BACKEND_URL}/api/cart/items`, {
-        product_id: product.id,
-        size,
-        color,
-        quantity
-      });
+      await axios.post(
+        `${BACKEND_URL}/api/cart/items`,
+        {
+          product_id: product.id,
+          size,
+          color,
+          quantity
+        },
+        {
+          headers: { ...getSessionHeaders(), 'Content-Type': 'application/json' }
+        }
+      );
       // Riallinea lo store allo stato server
       await syncCartFromServer();
       
@@ -173,7 +188,9 @@ export const useCart = () => {
       storeRemoveFromCart(itemId);
       publishCartSnapshot(useStore.getState().cart);
       // Backend: remove
-      await axios.delete(`${BACKEND_URL}/api/cart/items/${itemId}`);
+      await axios.delete(`${BACKEND_URL}/api/cart/items/${itemId}`, {
+        headers: getSessionHeaders()
+      });
       // Sync forte dal server
       await syncCartFromServer();
       
@@ -248,9 +265,15 @@ export const useCart = () => {
       storeUpdateQuantity(itemId, quantity);
       publishCartSnapshot(useStore.getState().cart);
       // Backend: update qty
-      await axios.put(`${BACKEND_URL}/api/cart/items/${itemId}`, {
-        quantity
-      });
+      await axios.put(
+        `${BACKEND_URL}/api/cart/items/${itemId}`,
+        {
+          quantity
+        },
+        {
+          headers: getSessionHeaders()
+        }
+      );
       // Sync forte dal server
       await syncCartFromServer();
       
@@ -301,7 +324,11 @@ export const useCart = () => {
       storeClearCart();
       publishCartSnapshot(useStore.getState().cart);
       // Backend: clear
-      await axios.post(`${BACKEND_URL}/api/cart/clear`);
+      await axios.post(
+        `${BACKEND_URL}/api/cart/clear`,
+        {},
+        { headers: getSessionHeaders() }
+      );
       // Sync forte dal server (dovrebbe risultare vuoto)
       await syncCartFromServer();
       

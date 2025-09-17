@@ -2,13 +2,23 @@
 # Version: 2.0.0 - Italian Fashion E-commerce with WebSocket Streaming
 # Security-First FastAPI Implementation with Real-time Voice Support
 
-from fastapi import FastAPI, HTTPException, Request, Depends, status, WebSocket, WebSocketDisconnect, Body
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Depends,
+    status,
+    WebSocket,
+    WebSocketDisconnect,
+    Body,
+    Response,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, List, Dict, Any, Set, Tuple
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 import hashlib
@@ -67,6 +77,33 @@ API_KEY = os.getenv("API_KEY", "demo-key-for-development")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 MAX_REQUESTS_PER_MINUTE = 60
 MAX_AI_REQUESTS_PER_MINUTE = 10
+SESSION_COOKIE_NAME = "aiva_session_id"
+
+
+def resolve_session_id(
+    request: Request, explicit: Optional[str] = None
+) -> Tuple[str, bool]:
+    candidate = (
+        explicit
+        or request.headers.get("x-session-id")
+        or request.cookies.get(SESSION_COOKIE_NAME)
+        or ""
+    ).strip()
+    if candidate:
+        return candidate, False
+    return str(uuid.uuid4()), True
+
+
+def ensure_session_cookie(response: Response, session_id: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_id,
+        httponly=False,
+        secure=False,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,
+    )
+
 
 # Initialize app
 app = FastAPI(
@@ -74,7 +111,7 @@ app = FastAPI(
     version="2.0.0",
     description="Secure voice-enabled Italian fashion e-commerce backend",
     docs_url="/api/docs",
-    redoc_url="/api/redoc"
+    redoc_url="/api/redoc",
 )
 
 # CORS Configuration
@@ -101,10 +138,17 @@ STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Public base URL for absolute asset links (so FE on another origin can load images)
-PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL") or os.getenv("BACKEND_PUBLIC_URL") or f"http://localhost:{os.getenv('PORT', '8000')}"
+PUBLIC_BASE_URL = (
+    os.getenv("PUBLIC_BASE_URL")
+    or os.getenv("BACKEND_PUBLIC_URL")
+    or f"http://localhost:{os.getenv('PORT', '8000')}"
+)
 
 # Dynamic assets base URL (e.g. CDN or static mount). Default to absolute backend URL
-ASSETS_BASE_URL = os.getenv("ASSETS_BASE_URL") or f"{PUBLIC_BASE_URL.rstrip('/')}/static/images"
+ASSETS_BASE_URL = (
+    os.getenv("ASSETS_BASE_URL") or f"{PUBLIC_BASE_URL.rstrip('/')}/static/images"
+)
+
 
 def build_image_url(path: str) -> str:
     """Build a robust image URL from a stored path or filename.
@@ -118,20 +162,25 @@ def build_image_url(path: str) -> str:
         return path
     if path.startswith("http://") or path.startswith("https://"):
         return path
-    base = (os.getenv("ASSETS_BASE_URL", ASSETS_BASE_URL) or "/static/images").rstrip("/")
+    base = (os.getenv("ASSETS_BASE_URL", ASSETS_BASE_URL) or "/static/images").rstrip(
+        "/"
+    )
     rel = path.lstrip("/")
     if rel.startswith("images/"):
         rel = rel.split("images/", 1)[1]
     return f"{base}/{rel}"
 
+
 # ============================================================================
 # ENUMS AND CONSTANTS
 # ============================================================================
+
 
 class Gender(str, Enum):
     UOMO = "uomo"
     DONNA = "donna"
     UNISEX = "unisex"
+
 
 class Size(str, Enum):
     XS = "XS"
@@ -140,6 +189,7 @@ class Size(str, Enum):
     L = "L"
     XL = "XL"
     XXL = "XXL"
+
 
 class ProductCategory(str, Enum):
     TSHIRT = "t-shirt"
@@ -153,6 +203,7 @@ class ProductCategory(str, Enum):
     VESTITO = "vestito"
     SCARPE = "scarpe"
     ACCESSORI = "accessori"
+
 
 # Italian synonyms mapping for natural language understanding
 SYNONYM_MAP = {
@@ -205,34 +256,45 @@ SYNONYM_MAP = {
 # SECURITY LAYER
 # ============================================================================
 
+
 class RateLimiter:
     """Rate limiting implementation"""
+
     def __init__(self):
         self.requests = {}
-    
+
     def check_rate_limit(self, key: str, max_requests: int, window: int = 60):
         now = time.time()
         if key not in self.requests:
             self.requests[key] = []
-        
-        self.requests[key] = [req_time for req_time in self.requests[key] 
-                             if now - req_time < window]
-        
+
+        self.requests[key] = [
+            req_time for req_time in self.requests[key] if now - req_time < window
+        ]
+
         if len(self.requests[key]) >= max_requests:
             return False
-        
+
         self.requests[key].append(now)
         return True
 
+
 rate_limiter = RateLimiter()
+
 
 def sanitize_input(text: str, max_length: int = 500) -> str:
     """Sanitize user input to prevent injection attacks"""
-    text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", text)
     text = text[:max_length]
-    text = re.sub(r'<script.*?>.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r'(DROP|DELETE|INSERT|UPDATE|SELECT|UNION|EXEC|EXECUTE)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r"<script.*?>.*?</script>", "", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(
+        r"(DROP|DELETE|INSERT|UPDATE|SELECT|UNION|EXEC|EXECUTE)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
     return text.strip()
+
 
 def normalize_italian_terms(text: str) -> str:
     """Normalize Italian terms to standard categories"""
@@ -242,9 +304,11 @@ def normalize_italian_terms(text: str) -> str:
             text_lower = text_lower.replace(synonym, category)
     return text_lower
 
+
 # ============================================================================
 # DATA MODELS
 # ============================================================================
+
 
 class ProductVariant(BaseModel):
     size: Size
@@ -252,6 +316,7 @@ class ProductVariant(BaseModel):
     color_code: str  # Hex color code
     available: bool
     stock: int
+
 
 class Product(BaseModel):
     id: str
@@ -277,6 +342,7 @@ class Product(BaseModel):
     reviews: int = 0
     tags: List[str]  # for search optimization
 
+
 class CartItem(BaseModel):
     id: str
     product_id: str
@@ -286,8 +352,9 @@ class CartItem(BaseModel):
     quantity: int = Field(ge=1, le=10)
     subtotal: float = 0.0
 
+
 class Cart(BaseModel):
-    items: List[CartItem] = []
+    items: List[CartItem] = Field(default_factory=list)
     total: float = 0.0
     item_count: int = 0
     discount_applied: float = 0.0
@@ -349,7 +416,9 @@ def serialize_product_for_ai(product: Product) -> Dict[str, Any]:
         }
 
 
-def sanitize_history_entries(history: Optional[List[Dict[str, Any]]], limit: int = 12) -> List[Dict[str, str]]:
+def sanitize_history_entries(
+    history: Optional[List[Dict[str, Any]]], limit: int = 12
+) -> List[Dict[str, str]]:
     if not history:
         return []
 
@@ -363,10 +432,7 @@ def sanitize_history_entries(history: Optional[List[Dict[str, Any]]], limit: int
             continue
         if not content:
             continue
-        sanitized.append({
-            "role": role,
-            "content": str(content).strip()[:800]
-        })
+        sanitized.append({"role": role, "content": str(content).strip()[:800]})
 
     if len(sanitized) > limit:
         return sanitized[-limit:]
@@ -379,17 +445,19 @@ class AddToCartRequest(BaseModel):
     size: str
     color: str
     quantity: int = 1
+    session_id: Optional[str] = None
 
 
 class VoiceRequest(BaseModel):
     text: str = Field(max_length=500)
     context: Optional[Dict[str, Any]] = {}
     session_id: Optional[str] = None
-    
-    @validator('text')
+
+    @validator("text")
     def sanitize_and_normalize(cls, v):
         v = sanitize_input(v)
         return v  # Keep original for AI, normalize separately for search
+
 
 class SearchFilters(BaseModel):
     category: Optional[str] = None
@@ -404,19 +472,36 @@ class SearchFilters(BaseModel):
     season: Optional[str] = None
     style: Optional[str] = None
 
+
 # ============================================================================
 # MOCK DATA STORE - ITALIAN FASHION CATALOG
 # ============================================================================
 
+
 class DataStore:
     """In-memory data store for fashion e-commerce demo"""
+
     def __init__(self):
         self.products = self._load_fashion_catalog()
-        self.cart = Cart()
+        self.carts: Dict[str, Cart] = {}
         self.current_page = "home"
         self.session_id = str(uuid.uuid4())
         self.user_preferences = {}
-        
+
+    def _resolve_session(self, session_id: Optional[str]) -> str:
+        sid = (session_id or "").strip()
+        if not sid:
+            sid = self.session_id
+        return sid
+
+    def get_cart(self, session_id: Optional[str]) -> Cart:
+        sid = self._resolve_session(session_id)
+        cart = self.carts.get(sid)
+        if cart is None:
+            cart = Cart()
+            self.carts[sid] = cart
+        return cart
+
     def _load_fashion_catalog(self) -> List[Product]:
         """Load comprehensive Italian fashion catalog"""
         products_data = [
@@ -439,19 +524,69 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Casual",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Bianco", color_code="#FFFFFF", available=True, stock=15),
-                    ProductVariant(size=Size.M, color="Bianco", color_code="#FFFFFF", available=True, stock=20),
-                    ProductVariant(size=Size.L, color="Bianco", color_code="#FFFFFF", available=True, stock=10),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=25),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=30),
-                    ProductVariant(size=Size.L, color="Nero", color_code="#000000", available=True, stock=18),
-                    ProductVariant(size=Size.M, color="Grigio melange", color_code="#B0B0B0", available=True, stock=12),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Bianco",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=15,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Bianco",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=20,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Bianco",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=25,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=30,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=18,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Grigio melange",
+                        color_code="#B0B0B0",
+                        available=True,
+                        stock=12,
+                    ),
                 ],
                 "images": ["/images/tshirt-basic-1.jpg", "/images/tshirt-basic-2.jpg"],
                 "features": ["Traspirante", "Cotone biologico", "Taglio regular"],
                 "rating": 4.6,
                 "reviews": 234,
-                "tags": ["basic", "essentials", "cotone", "bio", "unisex", "maglia", "maglietta"]
+                "tags": [
+                    "basic",
+                    "essentials",
+                    "cotone",
+                    "bio",
+                    "unisex",
+                    "maglia",
+                    "maglietta",
+                ],
             },
             {
                 "id": "550e8400-0002-41d4-a716-446655440002",
@@ -471,19 +606,48 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Smart Casual",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Blu navy", color_code="#000080", available=True, stock=8),
-                    ProductVariant(size=Size.L, color="Blu navy", color_code="#000080", available=True, stock=12),
-                    ProductVariant(size=Size.XL, color="Blu navy", color_code="#000080", available=True, stock=6),
-                    ProductVariant(size=Size.M, color="Bordeaux", color_code="#800020", available=True, stock=5),
-                    ProductVariant(size=Size.L, color="Bordeaux", color_code="#800020", available=True, stock=7),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Bordeaux",
+                        color_code="#800020",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Bordeaux",
+                        color_code="#800020",
+                        available=True,
+                        stock=7,
+                    ),
                 ],
                 "images": ["/images/polo-1.jpg"],
                 "features": ["Slim fit", "Logo ricamato", "Colletto button-down"],
                 "rating": 4.7,
                 "reviews": 89,
-                "tags": ["polo", "elegante", "piquet", "smart", "business casual"]
+                "tags": ["polo", "elegante", "piquet", "smart", "business casual"],
             },
-
             # CAMICIE
             {
                 "id": "550e8400-0003-41d4-a716-446655440003",
@@ -503,17 +667,47 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Formale/Business",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Bianco", color_code="#FFFFFF", available=True, stock=10),
-                    ProductVariant(size=Size.M, color="Bianco", color_code="#FFFFFF", available=True, stock=15),
-                    ProductVariant(size=Size.L, color="Bianco", color_code="#FFFFFF", available=True, stock=12),
-                    ProductVariant(size=Size.M, color="Azzurro", color_code="#87CEEB", available=True, stock=8),
-                    ProductVariant(size=Size.L, color="Azzurro", color_code="#87CEEB", available=True, stock=10),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Bianco",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Bianco",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=15,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Bianco",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Azzurro",
+                        color_code="#87CEEB",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Azzurro",
+                        color_code="#87CEEB",
+                        available=True,
+                        stock=10,
+                    ),
                 ],
                 "images": ["/images/camicia-oxford.jpg"],
                 "features": ["Button-down", "Taschino", "No stiro"],
                 "rating": 4.8,
                 "reviews": 156,
-                "tags": ["camicia", "oxford", "formale", "ufficio", "business"]
+                "tags": ["camicia", "oxford", "formale", "ufficio", "business"],
             },
             {
                 "id": "550e8400-0004-41d4-a716-446655440004",
@@ -533,18 +727,41 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Elegante",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Rosa antico", color_code="#D4A5A5", available=True, stock=6),
-                    ProductVariant(size=Size.M, color="Rosa antico", color_code="#D4A5A5", available=True, stock=8),
-                    ProductVariant(size=Size.L, color="Rosa antico", color_code="#D4A5A5", available=False, stock=0),
-                    ProductVariant(size=Size.M, color="Blu polvere", color_code="#B0C4DE", available=True, stock=5),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Rosa antico",
+                        color_code="#D4A5A5",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Rosa antico",
+                        color_code="#D4A5A5",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Rosa antico",
+                        color_code="#D4A5A5",
+                        available=False,
+                        stock=0,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Blu polvere",
+                        color_code="#B0C4DE",
+                        available=True,
+                        stock=5,
+                    ),
                 ],
                 "images": ["/images/camicetta-seta.jpg"],
                 "features": ["100% Seta", "Stampa floreale", "Taglio femminile"],
                 "rating": 4.9,
                 "reviews": 67,
-                "tags": ["camicetta", "blusa", "seta", "elegante", "floreale"]
+                "tags": ["camicetta", "blusa", "seta", "elegante", "floreale"],
             },
-
             # MAGLIONI
             {
                 "id": "550e8400-0005-41d4-a716-446655440005",
@@ -564,17 +781,47 @@ class DataStore:
                 "season": "Autunno/Inverno",
                 "style": "Elegante Casual",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Cammello", color_code="#C19A6B", available=True, stock=4),
-                    ProductVariant(size=Size.M, color="Cammello", color_code="#C19A6B", available=True, stock=6),
-                    ProductVariant(size=Size.L, color="Cammello", color_code="#C19A6B", available=True, stock=5),
-                    ProductVariant(size=Size.M, color="Grigio antracite", color_code="#293133", available=True, stock=7),
-                    ProductVariant(size=Size.L, color="Grigio antracite", color_code="#293133", available=True, stock=5),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Cammello",
+                        color_code="#C19A6B",
+                        available=True,
+                        stock=4,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Cammello",
+                        color_code="#C19A6B",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Cammello",
+                        color_code="#C19A6B",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Grigio antracite",
+                        color_code="#293133",
+                        available=True,
+                        stock=7,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Grigio antracite",
+                        color_code="#293133",
+                        available=True,
+                        stock=5,
+                    ),
                 ],
                 "images": ["/images/maglione-cashmere.jpg"],
                 "features": ["Puro cashmere", "Extra morbido", "Termoregolatore"],
                 "rating": 4.9,
                 "reviews": 43,
-                "tags": ["maglione", "cashmere", "pullover", "lusso", "inverno"]
+                "tags": ["maglione", "cashmere", "pullover", "lusso", "inverno"],
             },
             {
                 "id": "550e8400-0006-41d4-a716-446655440006",
@@ -594,19 +841,48 @@ class DataStore:
                 "season": "Autunno/Inverno",
                 "style": "Casual Elegante",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Nero", color_code="#000000", available=True, stock=8),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=10),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=12),
-                    ProductVariant(size=Size.S, color="Panna", color_code="#FFFDD0", available=True, stock=6),
-                    ProductVariant(size=Size.M, color="Panna", color_code="#FFFDD0", available=True, stock=8),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Panna",
+                        color_code="#FFFDD0",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Panna",
+                        color_code="#FFFDD0",
+                        available=True,
+                        stock=8,
+                    ),
                 ],
                 "images": ["/images/dolcevita-lana.jpg"],
                 "features": ["Lana merino", "Antibatterico naturale", "Slim fit"],
                 "rating": 4.7,
                 "reviews": 91,
-                "tags": ["dolcevita", "lana", "merino", "collo alto", "inverno"]
+                "tags": ["dolcevita", "lana", "merino", "collo alto", "inverno"],
             },
-
             # FELPE
             {
                 "id": "550e8400-0007-41d4-a716-446655440007",
@@ -626,19 +902,61 @@ class DataStore:
                 "season": "Autunno/Inverno",
                 "style": "Streetwear",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=20),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=25),
-                    ProductVariant(size=Size.L, color="Nero", color_code="#000000", available=True, stock=22),
-                    ProductVariant(size=Size.XL, color="Nero", color_code="#000000", available=True, stock=15),
-                    ProductVariant(size=Size.M, color="Grigio melange", color_code="#B0B0B0", available=True, stock=18),
-                    ProductVariant(size=Size.L, color="Grigio melange", color_code="#B0B0B0", available=True, stock=16),
-                    ProductVariant(size=Size.M, color="Verde oliva", color_code="#708238", available=True, stock=10),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=20,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=25,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=22,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=15,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Grigio melange",
+                        color_code="#B0B0B0",
+                        available=True,
+                        stock=18,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Grigio melange",
+                        color_code="#B0B0B0",
+                        available=True,
+                        stock=16,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Verde oliva",
+                        color_code="#708238",
+                        available=True,
+                        stock=10,
+                    ),
                 ],
                 "images": ["/images/felpa-hoodie.jpg"],
                 "features": ["Oversize", "Cappuccio regolabile", "Tasche marsupio"],
                 "rating": 4.8,
                 "reviews": 312,
-                "tags": ["felpa", "hoodie", "cappuccio", "streetwear", "oversize"]
+                "tags": ["felpa", "hoodie", "cappuccio", "streetwear", "oversize"],
             },
             {
                 "id": "550e8400-0008-41d4-a716-446655440008",
@@ -658,18 +976,41 @@ class DataStore:
                 "season": "Primavera/Autunno",
                 "style": "Vintage",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Blu navy", color_code="#000080", available=True, stock=14),
-                    ProductVariant(size=Size.L, color="Blu navy", color_code="#000080", available=True, stock=16),
-                    ProductVariant(size=Size.XL, color="Blu navy", color_code="#000080", available=False, stock=0),
-                    ProductVariant(size=Size.L, color="Grigio chiaro", color_code="#D3D3D3", available=True, stock=11),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=14,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=16,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=False,
+                        stock=0,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Grigio chiaro",
+                        color_code="#D3D3D3",
+                        available=True,
+                        stock=11,
+                    ),
                 ],
                 "images": ["/images/felpa-vintage.jpg"],
                 "features": ["Cotone biologico", "Logo ricamato", "Stile vintage"],
                 "rating": 4.6,
                 "reviews": 178,
-                "tags": ["felpa", "girocollo", "vintage", "retro", "cotone bio"]
+                "tags": ["felpa", "girocollo", "vintage", "retro", "cotone bio"],
             },
-
             # GIACCHE
             {
                 "id": "550e8400-0009-41d4-a716-446655440009",
@@ -689,16 +1030,40 @@ class DataStore:
                 "season": "Autunno/Inverno",
                 "style": "Urban",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=3),
-                    ProductVariant(size=Size.L, color="Nero", color_code="#000000", available=True, stock=5),
-                    ProductVariant(size=Size.XL, color="Nero", color_code="#000000", available=True, stock=2),
-                    ProductVariant(size=Size.L, color="Marrone", color_code="#8B4513", available=True, stock=2),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=3,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=2,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Marrone",
+                        color_code="#8B4513",
+                        available=True,
+                        stock=2,
+                    ),
                 ],
                 "images": ["/images/bomber-pelle.jpg"],
                 "features": ["Vera pelle", "Fodera termica", "Water resistant"],
                 "rating": 4.9,
                 "reviews": 67,
-                "tags": ["bomber", "pelle", "giacca", "giubbotto", "aviator"]
+                "tags": ["bomber", "pelle", "giacca", "giubbotto", "aviator"],
             },
             {
                 "id": "550e8400-0010-41d4-a716-446655440010",
@@ -718,18 +1083,54 @@ class DataStore:
                 "season": "Inverno",
                 "style": "Casual Elegante",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Nero", color_code="#000000", available=True, stock=6),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=8),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=10),
-                    ProductVariant(size=Size.L, color="Nero", color_code="#000000", available=True, stock=5),
-                    ProductVariant(size=Size.S, color="Beige", color_code="#F5F5DC", available=True, stock=4),
-                    ProductVariant(size=Size.M, color="Beige", color_code="#F5F5DC", available=True, stock=6),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=4,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=6,
+                    ),
                 ],
                 "images": ["/images/piumino-lungo.jpg"],
                 "features": ["Extra caldo", "Cappuccio removibile", "Antivento"],
                 "rating": 4.8,
                 "reviews": 234,
-                "tags": ["piumino", "cappotto", "inverno", "caldo", "lungo"]
+                "tags": ["piumino", "cappotto", "inverno", "caldo", "lungo"],
             },
             {
                 "id": "550e8400-0011-41d4-a716-446655440011",
@@ -749,18 +1150,41 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Formale/Business",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Blu notte", color_code="#191970", available=True, stock=4),
-                    ProductVariant(size=Size.L, color="Blu notte", color_code="#191970", available=True, stock=5),
-                    ProductVariant(size=Size.XL, color="Blu notte", color_code="#191970", available=True, stock=3),
-                    ProductVariant(size=Size.L, color="Grigio scuro", color_code="#696969", available=True, stock=3),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Blu notte",
+                        color_code="#191970",
+                        available=True,
+                        stock=4,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Blu notte",
+                        color_code="#191970",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Blu notte",
+                        color_code="#191970",
+                        available=True,
+                        stock=3,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Grigio scuro",
+                        color_code="#696969",
+                        available=True,
+                        stock=3,
+                    ),
                 ],
                 "images": ["/images/blazer-lana.jpg"],
                 "features": ["Taglio sartoriale", "Lana vergine", "Fodera completa"],
                 "rating": 4.9,
                 "reviews": 89,
-                "tags": ["blazer", "giacca", "formale", "sartoriale", "business"]
+                "tags": ["blazer", "giacca", "formale", "sartoriale", "business"],
             },
-
             # PANTALONI
             {
                 "id": "550e8400-0012-41d4-a716-446655440012",
@@ -780,18 +1204,54 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Casual",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Blu scuro", color_code="#00008B", available=True, stock=15),
-                    ProductVariant(size=Size.M, color="Blu scuro", color_code="#00008B", available=True, stock=20),
-                    ProductVariant(size=Size.L, color="Blu scuro", color_code="#00008B", available=True, stock=18),
-                    ProductVariant(size=Size.XL, color="Blu scuro", color_code="#00008B", available=True, stock=12),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=14),
-                    ProductVariant(size=Size.L, color="Nero", color_code="#000000", available=True, stock=16),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Blu scuro",
+                        color_code="#00008B",
+                        available=True,
+                        stock=15,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Blu scuro",
+                        color_code="#00008B",
+                        available=True,
+                        stock=20,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Blu scuro",
+                        color_code="#00008B",
+                        available=True,
+                        stock=18,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Blu scuro",
+                        color_code="#00008B",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=14,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=16,
+                    ),
                 ],
                 "images": ["/images/jeans-slim.jpg"],
                 "features": ["Stretch", "Slim fit", "Stone washed"],
                 "rating": 4.7,
                 "reviews": 456,
-                "tags": ["jeans", "denim", "pantaloni", "slim", "stretch"]
+                "tags": ["jeans", "denim", "pantaloni", "slim", "stretch"],
             },
             {
                 "id": "550e8400-0013-41d4-a716-446655440013",
@@ -811,16 +1271,40 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Business Casual",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Beige", color_code="#F5F5DC", available=True, stock=10),
-                    ProductVariant(size=Size.L, color="Beige", color_code="#F5F5DC", available=True, stock=12),
-                    ProductVariant(size=Size.XL, color="Beige", color_code="#F5F5DC", available=True, stock=8),
-                    ProductVariant(size=Size.L, color="Blu navy", color_code="#000080", available=True, stock=9),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=9,
+                    ),
                 ],
                 "images": ["/images/chino.jpg"],
                 "features": ["Regular fit", "Cotone twill", "No stiro"],
                 "rating": 4.6,
                 "reviews": 189,
-                "tags": ["chino", "pantaloni", "eleganti", "cotone", "business"]
+                "tags": ["chino", "pantaloni", "eleganti", "cotone", "business"],
             },
             {
                 "id": "550e8400-0014-41d4-a716-446655440014",
@@ -840,19 +1324,48 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Elegante",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Nero", color_code="#000000", available=True, stock=7),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=9),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=11),
-                    ProductVariant(size=Size.S, color="Crema", color_code="#FFFDD0", available=True, stock=5),
-                    ProductVariant(size=Size.M, color="Crema", color_code="#FFFDD0", available=True, stock=6),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=7,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=9,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=11,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Crema",
+                        color_code="#FFFDD0",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Crema",
+                        color_code="#FFFDD0",
+                        available=True,
+                        stock=6,
+                    ),
                 ],
                 "images": ["/images/pantaloni-palazzo.jpg"],
                 "features": ["Vita alta", "Gamba ampia", "Fluidi"],
                 "rating": 4.7,
                 "reviews": 123,
-                "tags": ["palazzo", "pantaloni", "eleganti", "vita alta", "donna"]
+                "tags": ["palazzo", "pantaloni", "eleganti", "vita alta", "donna"],
             },
-
             # SHORTS
             {
                 "id": "550e8400-0015-41d4-a716-446655440015",
@@ -872,16 +1385,40 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Casual/Outdoor",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Kaki", color_code="#C3B091", available=True, stock=15),
-                    ProductVariant(size=Size.L, color="Kaki", color_code="#C3B091", available=True, stock=18),
-                    ProductVariant(size=Size.XL, color="Kaki", color_code="#C3B091", available=True, stock=12),
-                    ProductVariant(size=Size.L, color="Verde militare", color_code="#4B5320", available=True, stock=10),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Kaki",
+                        color_code="#C3B091",
+                        available=True,
+                        stock=15,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Kaki",
+                        color_code="#C3B091",
+                        available=True,
+                        stock=18,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Kaki",
+                        color_code="#C3B091",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Verde militare",
+                        color_code="#4B5320",
+                        available=True,
+                        stock=10,
+                    ),
                 ],
                 "images": ["/images/bermuda-cargo.jpg"],
                 "features": ["Tasche cargo", "Resistente", "Coulisse in vita"],
                 "rating": 4.5,
                 "reviews": 234,
-                "tags": ["bermuda", "shorts", "cargo", "estate", "pantaloncini"]
+                "tags": ["bermuda", "shorts", "cargo", "estate", "pantaloncini"],
             },
             {
                 "id": "550e8400-0016-41d4-a716-446655440016",
@@ -901,18 +1438,41 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Sport",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Nero", color_code="#000000", available=True, stock=20),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=25),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=22),
-                    ProductVariant(size=Size.S, color="Rosa", color_code="#FFC0CB", available=True, stock=15),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=20,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=25,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=22,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Rosa",
+                        color_code="#FFC0CB",
+                        available=True,
+                        stock=15,
+                    ),
                 ],
                 "images": ["/images/shorts-sport.jpg"],
                 "features": ["Elasticizzati", "Traspiranti", "Quick dry"],
                 "rating": 4.6,
                 "reviews": 178,
-                "tags": ["shorts", "sport", "fitness", "yoga", "pantaloncini"]
+                "tags": ["shorts", "sport", "fitness", "yoga", "pantaloncini"],
             },
-
             # GONNE
             {
                 "id": "550e8400-0017-41d4-a716-446655440017",
@@ -932,16 +1492,40 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Elegante",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Rosa cipria", color_code="#F4C2C2", available=True, stock=6),
-                    ProductVariant(size=Size.S, color="Rosa cipria", color_code="#F4C2C2", available=True, stock=8),
-                    ProductVariant(size=Size.M, color="Rosa cipria", color_code="#F4C2C2", available=True, stock=7),
-                    ProductVariant(size=Size.S, color="Blu navy", color_code="#000080", available=True, stock=5),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Rosa cipria",
+                        color_code="#F4C2C2",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Rosa cipria",
+                        color_code="#F4C2C2",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Rosa cipria",
+                        color_code="#F4C2C2",
+                        available=True,
+                        stock=7,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Blu navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=5,
+                    ),
                 ],
                 "images": ["/images/gonna-midi.jpg"],
                 "features": ["Plissettata", "Lunghezza midi", "Fodera"],
                 "rating": 4.8,
                 "reviews": 91,
-                "tags": ["gonna", "midi", "plissettata", "elegante", "chiffon"]
+                "tags": ["gonna", "midi", "plissettata", "elegante", "chiffon"],
             },
             {
                 "id": "550e8400-0018-41d4-a716-446655440018",
@@ -961,18 +1545,41 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Casual",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Denim chiaro", color_code="#6495ED", available=True, stock=10),
-                    ProductVariant(size=Size.S, color="Denim chiaro", color_code="#6495ED", available=True, stock=12),
-                    ProductVariant(size=Size.M, color="Denim chiaro", color_code="#6495ED", available=True, stock=9),
-                    ProductVariant(size=Size.S, color="Denim scuro", color_code="#00008B", available=True, stock=8),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Denim chiaro",
+                        color_code="#6495ED",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Denim chiaro",
+                        color_code="#6495ED",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Denim chiaro",
+                        color_code="#6495ED",
+                        available=True,
+                        stock=9,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Denim scuro",
+                        color_code="#00008B",
+                        available=True,
+                        stock=8,
+                    ),
                 ],
                 "images": ["/images/minigonna-denim.jpg"],
                 "features": ["Bottoni frontali", "Taglio A-line", "Vintage style"],
                 "rating": 4.5,
                 "reviews": 156,
-                "tags": ["gonna", "mini", "denim", "jeans", "casual"]
+                "tags": ["gonna", "mini", "denim", "jeans", "casual"],
             },
-
             # VESTITI
             {
                 "id": "550e8400-0019-41d4-a716-446655440019",
@@ -992,16 +1599,40 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Formale/Gala",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Nero", color_code="#000000", available=True, stock=3),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=4),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=3),
-                    ProductVariant(size=Size.S, color="Rosso borgogna", color_code="#800020", available=True, stock=2),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=3,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=4,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=3,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Rosso borgogna",
+                        color_code="#800020",
+                        available=True,
+                        stock=2,
+                    ),
                 ],
                 "images": ["/images/abito-sera.jpg"],
                 "features": ["100% Seta", "Schiena scoperta", "Spacco laterale"],
                 "rating": 4.9,
                 "reviews": 45,
-                "tags": ["abito", "vestito", "sera", "elegante", "gala", "lungo"]
+                "tags": ["abito", "vestito", "sera", "elegante", "gala", "lungo"],
             },
             {
                 "id": "550e8400-0020-41d4-a716-446655440020",
@@ -1021,18 +1652,41 @@ class DataStore:
                 "season": "Primavera/Autunno",
                 "style": "Business Casual",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Verde salvia", color_code="#87A96B", available=True, stock=7),
-                    ProductVariant(size=Size.M, color="Verde salvia", color_code="#87A96B", available=True, stock=9),
-                    ProductVariant(size=Size.L, color="Verde salvia", color_code="#87A96B", available=True, stock=5),
-                    ProductVariant(size=Size.M, color="Blu polvere", color_code="#B0C4DE", available=True, stock=6),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Verde salvia",
+                        color_code="#87A96B",
+                        available=True,
+                        stock=7,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Verde salvia",
+                        color_code="#87A96B",
+                        available=True,
+                        stock=9,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Verde salvia",
+                        color_code="#87A96B",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Blu polvere",
+                        color_code="#B0C4DE",
+                        available=True,
+                        stock=6,
+                    ),
                 ],
                 "images": ["/images/vestito-chemisier.jpg"],
                 "features": ["Cintura inclusa", "Bottoni frontali", "Versatile"],
                 "rating": 4.7,
                 "reviews": 134,
-                "tags": ["vestito", "chemisier", "midi", "ufficio", "casual"]
+                "tags": ["vestito", "chemisier", "midi", "ufficio", "casual"],
             },
-
             # SCARPE
             {
                 "id": "550e8400-0021-41d4-a716-446655440021",
@@ -1052,17 +1706,47 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Casual/Street",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Bianco/Verde", color_code="#FFFFFF", available=True, stock=8),
-                    ProductVariant(size=Size.M, color="Bianco/Verde", color_code="#FFFFFF", available=True, stock=12),
-                    ProductVariant(size=Size.L, color="Bianco/Verde", color_code="#FFFFFF", available=True, stock=10),
-                    ProductVariant(size=Size.XL, color="Bianco/Verde", color_code="#FFFFFF", available=True, stock=6),
-                    ProductVariant(size=Size.M, color="Nero/Bianco", color_code="#000000", available=True, stock=9),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Bianco/Verde",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Bianco/Verde",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Bianco/Verde",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Bianco/Verde",
+                        color_code="#FFFFFF",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero/Bianco",
+                        color_code="#000000",
+                        available=True,
+                        stock=9,
+                    ),
                 ],
                 "images": ["/images/sneakers-vintage.jpg"],
                 "features": ["Pelle premium", "Stile vintage", "Suola vulcanizzata"],
                 "rating": 4.8,
                 "reviews": 289,
-                "tags": ["scarpe", "sneakers", "vintage", "pelle", "ginnastica"]
+                "tags": ["scarpe", "sneakers", "vintage", "pelle", "ginnastica"],
             },
             {
                 "id": "550e8400-0022-41d4-a716-446655440022",
@@ -1082,16 +1766,40 @@ class DataStore:
                 "season": "Autunno/Inverno",
                 "style": "Elegante Casual",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=5),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=7),
-                    ProductVariant(size=Size.L, color="Nero", color_code="#000000", available=True, stock=6),
-                    ProductVariant(size=Size.M, color="Marrone", color_code="#8B4513", available=True, stock=4),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=7,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Marrone",
+                        color_code="#8B4513",
+                        available=True,
+                        stock=4,
+                    ),
                 ],
                 "images": ["/images/stivali-chelsea.jpg"],
                 "features": ["Pelle di vitello", "Elastici laterali", "Suola in cuoio"],
                 "rating": 4.9,
                 "reviews": 156,
-                "tags": ["stivali", "chelsea", "pelle", "eleganti", "inverno"]
+                "tags": ["stivali", "chelsea", "pelle", "eleganti", "inverno"],
             },
             {
                 "id": "550e8400-0023-41d4-a716-446655440023",
@@ -1111,18 +1819,41 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Casual",
                 "variants": [
-                    ProductVariant(size=Size.S, color="Nude", color_code="#F5DEB3", available=True, stock=10),
-                    ProductVariant(size=Size.M, color="Nude", color_code="#F5DEB3", available=True, stock=12),
-                    ProductVariant(size=Size.L, color="Nude", color_code="#F5DEB3", available=False, stock=0),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=8),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nude",
+                        color_code="#F5DEB3",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nude",
+                        color_code="#F5DEB3",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nude",
+                        color_code="#F5DEB3",
+                        available=False,
+                        stock=0,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=8,
+                    ),
                 ],
                 "images": ["/images/sandali-platform.jpg"],
                 "features": ["Platform 5cm", "Cinturino regolabile", "Antiscivolo"],
                 "rating": 4.5,
                 "reviews": 201,
-                "tags": ["sandali", "platform", "estate", "ciabatte", "scarpe"]
+                "tags": ["sandali", "platform", "estate", "ciabatte", "scarpe"],
             },
-
             # ACCESSORI
             {
                 "id": "550e8400-0024-41d4-a716-446655440024",
@@ -1142,15 +1873,33 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Classico",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Nero/Marrone", color_code="#000000", available=True, stock=15),
-                    ProductVariant(size=Size.L, color="Nero/Marrone", color_code="#000000", available=True, stock=18),
-                    ProductVariant(size=Size.XL, color="Nero/Marrone", color_code="#000000", available=True, stock=12),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero/Marrone",
+                        color_code="#000000",
+                        available=True,
+                        stock=15,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Nero/Marrone",
+                        color_code="#000000",
+                        available=True,
+                        stock=18,
+                    ),
+                    ProductVariant(
+                        size=Size.XL,
+                        color="Nero/Marrone",
+                        color_code="#000000",
+                        available=True,
+                        stock=12,
+                    ),
                 ],
                 "images": ["/images/cintura-reversibile.jpg"],
                 "features": ["Reversibile", "Vera pelle", "Fibbia girevole"],
                 "rating": 4.7,
                 "reviews": 167,
-                "tags": ["cintura", "pelle", "accessori", "reversibile"]
+                "tags": ["cintura", "pelle", "accessori", "reversibile"],
             },
             {
                 "id": "550e8400-0025-41d4-a716-446655440025",
@@ -1170,15 +1919,33 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Urban",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=8),
-                    ProductVariant(size=Size.M, color="Cognac", color_code="#8B4513", available=True, stock=6),
-                    ProductVariant(size=Size.M, color="Grigio", color_code="#808080", available=True, stock=5),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Cognac",
+                        color_code="#8B4513",
+                        available=True,
+                        stock=6,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Grigio",
+                        color_code="#808080",
+                        available=True,
+                        stock=5,
+                    ),
                 ],
                 "images": ["/images/borsa-tracolla.jpg"],
                 "features": ["Capiente", "Multi-tasca", "Tracolla regolabile"],
                 "rating": 4.8,
                 "reviews": 234,
-                "tags": ["borsa", "tracolla", "accessori", "vegana"]
+                "tags": ["borsa", "tracolla", "accessori", "vegana"],
             },
             {
                 "id": "550e8400-0026-41d4-a716-446655440026",
@@ -1198,14 +1965,26 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Elegante",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Naturale", color_code="#F5DEB3", available=True, stock=7),
-                    ProductVariant(size=Size.L, color="Naturale", color_code="#F5DEB3", available=True, stock=9),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Naturale",
+                        color_code="#F5DEB3",
+                        available=True,
+                        stock=7,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Naturale",
+                        color_code="#F5DEB3",
+                        available=True,
+                        stock=9,
+                    ),
                 ],
                 "images": ["/images/cappello-panama.jpg"],
                 "features": ["Tessuto a mano", "Protezione UV", "Paglia naturale"],
                 "rating": 4.9,
                 "reviews": 78,
-                "tags": ["cappello", "panama", "estate", "paglia", "accessori"]
+                "tags": ["cappello", "panama", "estate", "paglia", "accessori"],
             },
             {
                 "id": "550e8400-0027-41d4-a716-446655440027",
@@ -1225,22 +2004,40 @@ class DataStore:
                 "season": "Autunno/Inverno",
                 "style": "Elegante",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Grigio perla", color_code="#E5E4E2", available=True, stock=5),
-                    ProductVariant(size=Size.M, color="Navy", color_code="#000080", available=True, stock=4),
-                    ProductVariant(size=Size.M, color="Bordeaux", color_code="#800020", available=True, stock=3),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Grigio perla",
+                        color_code="#E5E4E2",
+                        available=True,
+                        stock=5,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Navy",
+                        color_code="#000080",
+                        available=True,
+                        stock=4,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Bordeaux",
+                        color_code="#800020",
+                        available=True,
+                        stock=3,
+                    ),
                 ],
                 "images": ["/images/sciarpa-cashmere.jpg"],
                 "features": ["100% Cashmere", "200x70cm", "Extra morbida"],
                 "rating": 4.9,
                 "reviews": 56,
-                "tags": ["sciarpa", "cashmere", "inverno", "lusso", "accessori"]
+                "tags": ["sciarpa", "cashmere", "inverno", "lusso", "accessori"],
             },
             {
                 "id": "550e8400-0028-41d4-a716-446655440028",
                 "name": "Zaino Business",
                 "brand": "Tech Gear",
                 "description": "Zaino per laptop con porta USB",
-                "description_long": "Zaino professionale con scomparto imbottito per laptop fino a 15.6\". Porta USB esterna per powerbank. Schienale ergonomico traspirante.",
+                "description_long": 'Zaino professionale con scomparto imbottito per laptop fino a 15.6". Porta USB esterna per powerbank. Schienale ergonomico traspirante.',
                 "category": ProductCategory.ACCESSORI,
                 "subcategory": "zaini",
                 "gender": Gender.UNISEX,
@@ -1253,16 +2050,27 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Business/Tech",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=20),
-                    ProductVariant(size=Size.M, color="Grigio antracite", color_code="#293133", available=True, stock=15),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=20,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Grigio antracite",
+                        color_code="#293133",
+                        available=True,
+                        stock=15,
+                    ),
                 ],
                 "images": ["/images/zaino-business.jpg"],
                 "features": ["Porta USB", "Impermeabile", "Scomparto laptop"],
                 "rating": 4.7,
                 "reviews": 345,
-                "tags": ["zaino", "business", "laptop", "tech", "accessori"]
+                "tags": ["zaino", "business", "laptop", "tech", "accessori"],
             },
-
             # OUTFIT COMPLETI E SPECIAL ITEMS
             {
                 "id": "550e8400-0029-41d4-a716-446655440029",
@@ -1282,15 +2090,33 @@ class DataStore:
                 "season": "Primavera/Estate",
                 "style": "Elegante",
                 "variants": [
-                    ProductVariant(size=Size.M, color="Beige", color_code="#F5F5DC", available=True, stock=3),
-                    ProductVariant(size=Size.L, color="Beige", color_code="#F5F5DC", available=True, stock=4),
-                    ProductVariant(size=Size.L, color="Azzurro polvere", color_code="#B0C4DE", available=True, stock=2),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=3,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Beige",
+                        color_code="#F5F5DC",
+                        available=True,
+                        stock=4,
+                    ),
+                    ProductVariant(
+                        size=Size.L,
+                        color="Azzurro polvere",
+                        color_code="#B0C4DE",
+                        available=True,
+                        stock=2,
+                    ),
                 ],
                 "images": ["/images/completo-lino.jpg"],
                 "features": ["100% Lino", "Giacca e pantalone", "Traspirante"],
                 "rating": 4.8,
                 "reviews": 34,
-                "tags": ["completo", "lino", "elegante", "matrimonio", "estate"]
+                "tags": ["completo", "lino", "elegante", "matrimonio", "estate"],
             },
             {
                 "id": "550e8400-0030-41d4-a716-446655440030",
@@ -1310,18 +2136,48 @@ class DataStore:
                 "season": "Quattro stagioni",
                 "style": "Sport/Athleisure",
                 "variants": [
-                    ProductVariant(size=Size.XS, color="Rosa antico", color_code="#D4A5A5", available=True, stock=8),
-                    ProductVariant(size=Size.S, color="Rosa antico", color_code="#D4A5A5", available=True, stock=10),
-                    ProductVariant(size=Size.M, color="Rosa antico", color_code="#D4A5A5", available=True, stock=9),
-                    ProductVariant(size=Size.S, color="Nero", color_code="#000000", available=True, stock=12),
-                    ProductVariant(size=Size.M, color="Nero", color_code="#000000", available=True, stock=15),
+                    ProductVariant(
+                        size=Size.XS,
+                        color="Rosa antico",
+                        color_code="#D4A5A5",
+                        available=True,
+                        stock=8,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Rosa antico",
+                        color_code="#D4A5A5",
+                        available=True,
+                        stock=10,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Rosa antico",
+                        color_code="#D4A5A5",
+                        available=True,
+                        stock=9,
+                    ),
+                    ProductVariant(
+                        size=Size.S,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=12,
+                    ),
+                    ProductVariant(
+                        size=Size.M,
+                        color="Nero",
+                        color_code="#000000",
+                        available=True,
+                        stock=15,
+                    ),
                 ],
                 "images": ["/images/tuta-sportiva.jpg"],
                 "features": ["Set coordinato", "Elasticizzato", "Moisture wicking"],
                 "rating": 4.7,
                 "reviews": 267,
-                "tags": ["tuta", "sport", "fitness", "yoga", "completo", "athleisure"]
-            }
+                "tags": ["tuta", "sport", "fitness", "yoga", "completo", "athleisure"],
+            },
         ]
 
         # Resolve image URLs dynamically based on ASSETS_BASE_URL
@@ -1338,7 +2194,7 @@ class DataStore:
             "550e8400-0009-41d4-a716-446655440009",  # Bomber in Pelle
             "550e8400-0012-41d4-a716-446655440012",  # Jeans Slim Fit Stretch
             "550e8400-0021-41d4-a716-446655440021",  # Sneakers Vintage Pelle
-            "550e8400-0024-41d4-a716-446655440024"   # Cintura in Pelle Reversibile
+            "550e8400-0024-41d4-a716-446655440024",  # Cintura in Pelle Reversibile
         }
 
         for p in products_data:
@@ -1355,7 +2211,7 @@ class DataStore:
                     else:
                         # If prices are equal, apply a modest 10% discount
                         p["discount_percentage"] = p.get("discount_percentage", 10)
-                        p["price"] = round(op * (1 - p["discount_percentage"]/100), 2)
+                        p["price"] = round(op * (1 - p["discount_percentage"] / 100), 2)
                 except Exception:
                     p["discount_percentage"] = p.get("discount_percentage", 10)
             else:
@@ -1366,209 +2222,342 @@ class DataStore:
                     p["price"] = p["original_price"]
 
         return [Product(**p) for p in products_data]
-    
-    def search_products(self, 
-                       query: Optional[str] = None,
-                       filters: Optional[SearchFilters] = None,
-                       limit: int = 10) -> List[Product]:
+
+    def search_products(
+        self,
+        query: Optional[str] = None,
+        filters: Optional[SearchFilters] = None,
+        limit: int = 10,
+    ) -> List[Product]:
         """Advanced product search with Italian term normalization"""
         results = self.products
-        
+
         # Apply query search with Italian normalization
         if query:
             query_normalized = normalize_italian_terms(query.lower())
             query_terms = query_normalized.split()
-            
+
             results = []
             for product in self.products:
                 # Calculate relevance score
                 score = 0
                 product_text = f"{product.name} {product.brand} {product.description} {product.category} {product.subcategory} {' '.join(product.tags)}".lower()
                 product_text_normalized = normalize_italian_terms(product_text)
-                
+
                 for term in query_terms:
                     if term in product_text_normalized:
                         score += 2
                     elif any(term in tag for tag in product.tags):
                         score += 1
-                
+
                 if score > 0:
                     results.append((score, product))
-            
+
             # Sort by relevance score
             results.sort(key=lambda x: x[0], reverse=True)
             results = [p for _, p in results]
-        
+
         # Apply filters
         if filters:
             if filters.category:
                 cat_normalized = normalize_italian_terms(filters.category.lower())
-                results = [p for p in results if cat_normalized in p.category.value.lower() or cat_normalized in p.subcategory.lower()]
-            
+                results = [
+                    p
+                    for p in results
+                    if cat_normalized in p.category.value.lower()
+                    or cat_normalized in p.subcategory.lower()
+                ]
+
             if filters.gender:
-                results = [p for p in results if p.gender == filters.gender or p.gender == Gender.UNISEX]
-            
+                results = [
+                    p
+                    for p in results
+                    if p.gender == filters.gender or p.gender == Gender.UNISEX
+                ]
+
             if filters.size:
-                results = [p for p in results if any(v.size == filters.size and v.available for v in p.variants)]
-            
+                results = [
+                    p
+                    for p in results
+                    if any(v.size == filters.size and v.available for v in p.variants)
+                ]
+
             if filters.color:
                 color_lower = filters.color.lower()
-                results = [p for p in results if any(color_lower in v.color.lower() for v in p.variants)]
-            
+                results = [
+                    p
+                    for p in results
+                    if any(color_lower in v.color.lower() for v in p.variants)
+                ]
+
             if filters.price_min is not None:
                 results = [p for p in results if p.price >= filters.price_min]
-            
+
             if filters.price_max is not None:
                 results = [p for p in results if p.price <= filters.price_max]
-            
+
             if filters.on_sale is not None:
                 results = [p for p in results if p.on_sale == filters.on_sale]
-            
+
             if filters.brand:
-                results = [p for p in results if filters.brand.lower() in p.brand.lower()]
-            
+                results = [
+                    p for p in results if filters.brand.lower() in p.brand.lower()
+                ]
+
             if filters.season:
-                results = [p for p in results if filters.season.lower() in p.season.lower()]
-            
+                results = [
+                    p for p in results if filters.season.lower() in p.season.lower()
+                ]
+
             if filters.style:
-                results = [p for p in results if filters.style.lower() in p.style.lower()]
-        
+                results = [
+                    p for p in results if filters.style.lower() in p.style.lower()
+                ]
+
         return results[:limit]
-    
+
     def get_product_by_id(self, product_id: str) -> Optional[Product]:
         """Get single product by ID"""
         for product in self.products:
             if product.id == product_id:
                 return product
         return None
-    
-    def check_variant_availability(self, product_id: str, size: str, color: str) -> bool:
+
+    def check_variant_availability(
+        self, product_id: str, size: str, color: str
+    ) -> bool:
         """Check if specific variant is available"""
         product = self.get_product_by_id(product_id)
         if not product:
             return False
-        
+
         for variant in product.variants:
             if variant.size.value == size and variant.color.lower() == color.lower():
                 return variant.available and variant.stock > 0
         return False
-    
-    def add_to_cart(self, product_id: str, size: str, color: str, quantity: int) -> CartItem:
+
+    def add_to_cart(
+        self,
+        session_id: Optional[str],
+        product_id: str,
+        size: str,
+        color: str,
+        quantity: int,
+    ) -> CartItem:
         """Add item to cart with specific variant"""
         product = self.get_product_by_id(product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Prodotto non trovato")
-        
+
         # Check variant availability
         variant_found = False
         for variant in product.variants:
             if variant.size.value == size and variant.color.lower() == color.lower():
                 variant_found = True
                 if not variant.available or variant.stock < quantity:
-                    raise HTTPException(status_code=400, detail="Variante non disponibile o stock insufficiente")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Variante non disponibile o stock insufficiente",
+                    )
                 break
-        
+
         if not variant_found:
             raise HTTPException(status_code=400, detail="Variante non trovata")
-        
+
+        cart = self.get_cart(session_id)
+
         # Check if same variant already in cart
-        for item in self.cart.items:
-            if item.product_id == product_id and item.size.value == size and item.color.lower() == color.lower():
+        for item in cart.items:
+            if (
+                item.product_id == product_id
+                and item.size.value == size
+                and item.color.lower() == color.lower()
+            ):
                 item.quantity += quantity
                 item.subtotal = item.quantity * product.price
-                self._update_cart_totals()
+                self._update_cart_totals(cart)
                 return item
-        
+
         # Add new item
         cart_item = CartItem(
             id=f"cart-{uuid.uuid4()}",
             product_id=product_id,
             product=product,
-            size=Size(size),
+            size=Size(size.upper()),
             color=color,
             quantity=quantity,
-            subtotal=quantity * product.price
+            subtotal=quantity * product.price,
         )
-        self.cart.items.append(cart_item)
-        self._update_cart_totals()
+        cart.items.append(cart_item)
+        self._update_cart_totals(cart)
         return cart_item
-    
-    def _update_cart_totals(self):
+
+    def _update_cart_totals(self, cart: Cart):
         """Update cart totals with shipping calculation"""
-        self.cart.total = sum(item.subtotal for item in self.cart.items)
-        self.cart.item_count = sum(item.quantity for item in self.cart.items)
-        
-        # Free shipping over 100€
-        if self.cart.total >= 100:
-            self.cart.shipping = 0.0
+        cart.total = sum(item.subtotal for item in cart.items)
+        cart.item_count = sum(item.quantity for item in cart.items)
+
+        if cart.total >= 100:
+            cart.shipping = 0.0
+        elif cart.item_count > 0:
+            cart.shipping = 9.90
         else:
-            self.cart.shipping = 9.90
-        
-        self.cart.grand_total = self.cart.total + self.cart.shipping - self.cart.discount_applied
-    
-    def get_recommendations(self, 
-                           product_id: Optional[str] = None,
-                           category: Optional[str] = None,
-                           style: Optional[str] = None,
-                           limit: int = 3) -> List[Product]:
+            cart.shipping = 0.0
+
+        cart.grand_total = cart.total + cart.shipping - cart.discount_applied
+
+    def remove_from_cart(self, session_id: Optional[str], item_id: str) -> None:
+        cart = self.get_cart(session_id)
+        cart.items = [item for item in cart.items if item.id != item_id]
+        self._update_cart_totals(cart)
+
+    def clear_cart(self, session_id: Optional[str]) -> Cart:
+        sid = self._resolve_session(session_id)
+        self.carts[sid] = Cart()
+        return self.carts[sid]
+
+    def cart_snapshot(self, session_id: Optional[str]) -> List[Dict[str, Any]]:
+        cart = self.get_cart(session_id)
+        snapshot: List[Dict[str, Any]] = []
+        for item in cart.items:
+            snapshot.append(
+                {
+                    "item_id": item.id,
+                    "product_id": item.product_id,
+                    "name": getattr(item.product, "name", ""),
+                    "size": item.size.value
+                    if isinstance(item.size, Size)
+                    else item.size,
+                    "color": item.color,
+                    "quantity": item.quantity,
+                    "price": getattr(item.product, "price", None),
+                }
+            )
+        return snapshot
+
+    def get_recommendations(
+        self,
+        product_id: Optional[str] = None,
+        category: Optional[str] = None,
+        style: Optional[str] = None,
+        limit: int = 3,
+    ) -> List[Product]:
         """Get smart product recommendations"""
         recommendations = []
-        
+
         if product_id:
             product = self.get_product_by_id(product_id)
             if product:
                 # Get complementary items
                 if product.category == ProductCategory.TSHIRT:
                     # Recommend pants and shoes
-                    recommendations.extend(self.search_products(filters=SearchFilters(category="pantaloni"), limit=1))
-                    recommendations.extend(self.search_products(filters=SearchFilters(category="scarpe"), limit=1))
+                    recommendations.extend(
+                        self.search_products(
+                            filters=SearchFilters(category="pantaloni"), limit=1
+                        )
+                    )
+                    recommendations.extend(
+                        self.search_products(
+                            filters=SearchFilters(category="scarpe"), limit=1
+                        )
+                    )
                 elif product.category == ProductCategory.PANTALONI:
                     # Recommend shirts and shoes
-                    recommendations.extend(self.search_products(filters=SearchFilters(category="camicia"), limit=1))
-                    recommendations.extend(self.search_products(filters=SearchFilters(category="scarpe"), limit=1))
+                    recommendations.extend(
+                        self.search_products(
+                            filters=SearchFilters(category="camicia"), limit=1
+                        )
+                    )
+                    recommendations.extend(
+                        self.search_products(
+                            filters=SearchFilters(category="scarpe"), limit=1
+                        )
+                    )
                 elif product.category == ProductCategory.SCARPE:
                     # Recommend matching accessories
-                    recommendations.extend(self.search_products(filters=SearchFilters(category="accessori"), limit=2))
-                
+                    recommendations.extend(
+                        self.search_products(
+                            filters=SearchFilters(category="accessori"), limit=2
+                        )
+                    )
+
                 # Add similar items from same category
-                similar = [p for p in self.products 
-                          if p.category == product.category 
-                          and p.id != product_id
-                          and p.gender == product.gender]
-                recommendations.extend(similar[:limit - len(recommendations)])
-        
+                similar = [
+                    p
+                    for p in self.products
+                    if p.category == product.category
+                    and p.id != product_id
+                    and p.gender == product.gender
+                ]
+                recommendations.extend(similar[: limit - len(recommendations)])
+
         elif category:
             cat_normalized = normalize_italian_terms(category.lower())
-            recommendations = self.search_products(filters=SearchFilters(category=cat_normalized), limit=limit)
-        
+            recommendations = self.search_products(
+                filters=SearchFilters(category=cat_normalized), limit=limit
+            )
+
         elif style:
-            recommendations = [p for p in self.products if style.lower() in p.style.lower()][:limit]
-        
+            recommendations = [
+                p for p in self.products if style.lower() in p.style.lower()
+            ][:limit]
+
         else:
             # Return best sellers (highest reviews)
-            recommendations = sorted(self.products, key=lambda p: p.reviews, reverse=True)[:limit]
-        
+            recommendations = sorted(
+                self.products, key=lambda p: p.reviews, reverse=True
+            )[:limit]
+
         return recommendations[:limit]
-    
+
     def get_size_guide(self, category: str) -> Dict[str, Any]:
         """Get size guide for category"""
         guides = {
             "tshirt": {
-                "uomo": {"XS": "44-46", "S": "46-48", "M": "48-50", "L": "50-52", "XL": "52-54", "XXL": "54-56"},
-                "donna": {"XS": "38-40", "S": "40-42", "M": "42-44", "L": "44-46", "XL": "46-48", "XXL": "48-50"}
+                "uomo": {
+                    "XS": "44-46",
+                    "S": "46-48",
+                    "M": "48-50",
+                    "L": "50-52",
+                    "XL": "52-54",
+                    "XXL": "54-56",
+                },
+                "donna": {
+                    "XS": "38-40",
+                    "S": "40-42",
+                    "M": "42-44",
+                    "L": "44-46",
+                    "XL": "46-48",
+                    "XXL": "48-50",
+                },
             },
             "pantaloni": {
-                "uomo": {"XS": "44", "S": "46", "M": "48", "L": "50", "XL": "52", "XXL": "54"},
-                "donna": {"XS": "38", "S": "40", "M": "42", "L": "44", "XL": "46", "XXL": "48"}
+                "uomo": {
+                    "XS": "44",
+                    "S": "46",
+                    "M": "48",
+                    "L": "50",
+                    "XL": "52",
+                    "XXL": "54",
+                },
+                "donna": {
+                    "XS": "38",
+                    "S": "40",
+                    "M": "42",
+                    "L": "44",
+                    "XL": "46",
+                    "XXL": "48",
+                },
             },
             "scarpe": {
                 "uomo": {"S": "39-40", "M": "41-42", "L": "43-44", "XL": "45-46"},
-                "donna": {"XS": "35-36", "S": "37-38", "M": "39-40", "L": "41-42"}
-            }
+                "donna": {"XS": "35-36", "S": "37-38", "M": "39-40", "L": "41-42"},
+            },
         }
-        
+
         cat_normalized = normalize_italian_terms(category.lower())
         return guides.get(cat_normalized, guides.get("tshirt"))
+
 
 # Initialize data store
 data_store = DataStore()
@@ -1577,8 +2566,10 @@ data_store = DataStore()
 # WEBSOCKET MANAGER
 # ============================================================================
 
+
 class ConnectionManager:
     """WebSocket connection manager for real-time streaming"""
+
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self.user_sessions: Dict[str, Dict] = {}
@@ -1589,7 +2580,7 @@ class ConnectionManager:
         self.user_sessions[session_id] = {
             "websocket": websocket,
             "preferences": {},
-            "history": []
+            "history": [],
         }
         logger.info(f"WebSocket connected: {session_id}")
 
@@ -1606,11 +2597,13 @@ class ConnectionManager:
         for connection in self.active_connections:
             await connection.send_json(message)
 
+
 manager = ConnectionManager()
 
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
+
 
 @app.get("/")
 async def root():
@@ -1621,8 +2614,9 @@ async def root():
         "language": "Italian",
         "catalog_size": len(data_store.products),
         "status": "operational",
-        "documentation": "/api/docs"
+        "documentation": "/api/docs",
     }
+
 
 @app.get("/health")
 async def health_check():
@@ -1632,15 +2626,16 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
         "version": "2.0.0",
         "products_loaded": len(data_store.products),
-        "categories": list(ProductCategory)
+        "categories": list(ProductCategory),
     }
+
 
 # WebSocket endpoint for real-time voice streaming
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket endpoint for real-time voice interaction"""
     await manager.connect(websocket, session_id)
-    
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -1666,67 +2661,98 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 for pid in (client_ctx.get("visible_products") or [])[:24]:
                     p = data_store.get_product_by_id(pid)
                     if p:
-                        visible_products_details.append({
-                            "id": p.id,
-                            "name": p.name,
-                            "category": p.category,
-                            "gender": p.gender,
-                            "price": p.price,
-                            "on_sale": p.on_sale,
-                            "discount": p.discount_percentage,
-                        })
+                        visible_products_details.append(
+                            {
+                                "id": p.id,
+                                "name": p.name,
+                                "category": p.category,
+                                "gender": p.gender,
+                                "price": p.price,
+                                "on_sale": p.on_sale,
+                                "discount": p.discount_percentage,
+                            }
+                        )
 
                 # Mappa normalizzata nome->id inviata dal client
                 visible_products_map = client_ctx.get("visible_products_map") or {}
 
                 incoming_history = client_ctx.get("history")
                 if incoming_history:
-                    sanitized_history = sanitize_history_entries(incoming_history, limit=24)
+                    sanitized_history = sanitize_history_entries(
+                        incoming_history, limit=24
+                    )
                     manager.user_sessions[session_id]["history"] = sanitized_history
                 else:
-                    sanitized_history = manager.user_sessions[session_id].get("history", [])
+                    sanitized_history = manager.user_sessions[session_id].get(
+                        "history", []
+                    )
+
+                cart_state = data_store.get_cart(session_id)
+                server_cart_snapshot = data_store.cart_snapshot(session_id)
+                client_cart = client_ctx.get("cart")
+                if isinstance(client_cart, list):
+                    cart_payload = client_cart
+                    cart_count = len(client_cart)
+                else:
+                    cart_payload = server_cart_snapshot
+                    cart_count = cart_state.item_count
+
+                cart_items_map = (
+                    client_ctx.get("cart_items_map")
+                    if isinstance(client_ctx.get("cart_items_map"), dict)
+                    else {}
+                )
 
                 context = {
                     "session_id": session_id,
                     "preferences": manager.user_sessions[session_id]["preferences"],
                     "current_page": data_store.current_page,
-                    "cart_count": (len(client_ctx.get("cart", [])) if isinstance(client_ctx.get("cart"), list) else data_store.cart.item_count),
-                    "cart": client_ctx.get("cart", []),
-                    "cart_items_map": client_ctx.get("cart_items_map", {}),
+                    "cart_count": cart_count,
+                    "cart": cart_payload,
+                    "cart_items_map": cart_items_map,
                     "current_product": current_product_details,
                     "visible_products": visible_products_details,
                     "visible_products_map": visible_products_map,
-                    "ui_filters": client_ctx.get("ui_filters", {})
+                    "ui_filters": client_ctx.get("ui_filters", {}),
                 }
 
-                history_for_context = sanitize_history_entries(sanitized_history, limit=12)
+                history_for_context = sanitize_history_entries(
+                    sanitized_history, limit=12
+                )
                 if history_for_context:
                     context["history"] = history_for_context
 
-                await manager.send_json(websocket, {
-                    "type": "processing_start",
-                    "message": "Sto elaborando la tua richiesta..."
-                })
+                await manager.send_json(
+                    websocket,
+                    {
+                        "type": "processing_start",
+                        "message": "Sto elaborando la tua richiesta...",
+                    },
+                )
 
                 try:
                     from ai_service import process_voice_command_streaming
+
                     async for chunk in process_voice_command_streaming(text, context):
                         await manager.send_json(websocket, chunk)
                 except Exception as e:
                     logger.error(f"AI processing error: {e}")
-                    await manager.send_json(websocket, {
-                        "type": "error",
-                        "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi."
-                    })
+                    await manager.send_json(
+                        websocket,
+                        {
+                            "type": "error",
+                            "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi.",
+                        },
+                    )
 
-                
             elif data.get("type") == "update_preferences":
                 # Update user preferences
                 preferences = data.get("preferences", {})
                 manager.user_sessions[session_id]["preferences"].update(preferences)
-                
+
     except WebSocketDisconnect:
         manager.disconnect(websocket, session_id)
+
 
 # Product Endpoints
 @app.get("/api/products", response_model=List[Product])
@@ -1740,7 +2766,7 @@ async def get_products(
     max_price: Optional[float] = None,
     on_sale: Optional[bool] = None,
     brand: Optional[str] = None,
-    limit: int = 20
+    limit: int = 20,
 ):
     """Get products with advanced filtering"""
     filters = SearchFilters(
@@ -1751,10 +2777,11 @@ async def get_products(
         price_min=min_price,
         price_max=max_price,
         on_sale=on_sale,
-        brand=brand
+        brand=brand,
     )
-    
+
     return data_store.search_products(query=q, filters=filters, limit=limit)
+
 
 @app.get("/api/products/{product_id}", response_model=Product)
 async def get_product(product_id: str):
@@ -1764,54 +2791,78 @@ async def get_product(product_id: str):
         raise HTTPException(status_code=404, detail="Prodotto non trovato")
     return product
 
+
 @app.get("/api/products/{product_id}/availability")
 async def check_availability(product_id: str, size: str, color: str):
     """Check specific variant availability"""
     available = data_store.check_variant_availability(product_id, size, color)
     return {"available": available}
 
+
 @app.get("/api/recommendations", response_model=List[Product])
 async def get_recommendations(
     product_id: Optional[str] = None,
     category: Optional[str] = None,
     style: Optional[str] = None,
-    limit: int = 3
+    limit: int = 3,
 ):
     """Get smart product recommendations"""
     return data_store.get_recommendations(product_id, category, style, limit)
 
+
 # Cart Endpoints
 @app.get("/api/cart", response_model=Cart)
-async def get_cart():
+async def get_cart(request: Request, response: Response):
     """Get current cart with totals"""
-    return data_store.cart
+    session_id, created = resolve_session_id(request)
+    if created:
+        ensure_session_cookie(response, session_id)
+    return data_store.get_cart(session_id)
+
 
 @app.post("/api/cart/items")
-async def add_to_cart(req: AddToCartRequest = Body(...)):
+async def add_to_cart(
+    request: Request, response: Response, req: AddToCartRequest = Body(...)
+):
     """Add item to cart with specific variant"""
     if req.quantity < 1 or req.quantity > 10:
         raise HTTPException(status_code=400, detail="Quantità deve essere tra 1 e 10")
-    
-    cart_item = data_store.add_to_cart(req.product_id, req.size, req.color, req.quantity)
+
+    session_id, created = resolve_session_id(request, req.session_id)
+    if created:
+        ensure_session_cookie(response, session_id)
+
+    cart_item = data_store.add_to_cart(
+        session_id, req.product_id, req.size, req.color, req.quantity
+    )
+    cart_state = data_store.get_cart(session_id)
     return {
         "success": True,
         "item": cart_item,
-        "cart_total": data_store.cart.grand_total,
-        "message": f"Aggiunto al carrello: {cart_item.product.name} - Taglia {req.size} - {req.color}"
+        "cart_total": cart_state.grand_total,
+        "message": f"Aggiunto al carrello: {cart_item.product.name} - Taglia {req.size} - {req.color}",
     }
 
+
 @app.delete("/api/cart/items/{item_id}")
-async def remove_from_cart(item_id: str):
+async def remove_from_cart(item_id: str, request: Request, response: Response):
     """Remove item from cart"""
-    data_store.cart.items = [item for item in data_store.cart.items if item.id != item_id]
-    data_store._update_cart_totals()
+    session_id, created = resolve_session_id(request)
+    if created:
+        ensure_session_cookie(response, session_id)
+    data_store.remove_from_cart(session_id, item_id)
     return {"success": True, "message": "Articolo rimosso dal carrello"}
 
+
 @app.post("/api/cart/clear")
-async def clear_cart():
+async def clear_cart(request: Request, response: Response):
     """Clear entire cart"""
-    data_store.cart = Cart()
+    session_id, created = resolve_session_id(request)
+    if created:
+        ensure_session_cookie(response, session_id)
+    data_store.clear_cart(session_id)
     return {"success": True, "message": "Carrello svuotato"}
+
 
 # Voice & AI Endpoints
 @app.post("/api/voice/process")
@@ -1823,23 +2874,27 @@ async def process_voice_command(request: VoiceRequest):
         "action": "search_products",
         "parameters": {"query": request.text},
         "message": "Cerco quello che mi hai chiesto...",
-        "success": True
+        "success": True,
     }
+
 
 # ---------------------------------------------------------------------------
 # Vercel-compatible voice endpoint (HTTP, no WebSocket required)
 # Returns the full turn as a list of events in one response
 @app.post("/api/voice/command")
-async def voice_command(req: VoiceRequest):
+async def voice_command(req: VoiceRequest, request: Request, response: Response):
     events: List[Dict[str, Any]] = []
     # Prepend processing_start for immediate UX feedback
-    events.append({
-        "type": "processing_start",
-        "message": "Sto elaborando la tua richiesta..."
-    })
+    events.append(
+        {"type": "processing_start", "message": "Sto elaborando la tua richiesta..."}
+    )
 
     # Build context similar to the WebSocket path, merging client context
     client_ctx = req.context or {}
+
+    session_id, created = resolve_session_id(request, req.session_id)
+    if created:
+        ensure_session_cookie(response, session_id)
 
     # Current product details if provided by client
     current_product_details = None
@@ -1853,29 +2908,47 @@ async def voice_command(req: VoiceRequest):
     for pid in (client_ctx.get("visible_products") or [])[:24]:
         p = data_store.get_product_by_id(pid)
         if p:
-            visible_products_details.append({
-                "id": p.id,
-                "name": p.name,
-                "category": p.category,
-                "gender": p.gender,
-                "price": p.price,
-                "on_sale": p.on_sale,
-                "discount": p.discount_percentage,
-            })
+            visible_products_details.append(
+                {
+                    "id": p.id,
+                    "name": p.name,
+                    "category": p.category,
+                    "gender": p.gender,
+                    "price": p.price,
+                    "on_sale": p.on_sale,
+                    "discount": p.discount_percentage,
+                }
+            )
 
     visible_products_map = client_ctx.get("visible_products_map") or {}
 
+    cart_state = data_store.get_cart(session_id)
+    server_cart_snapshot = data_store.cart_snapshot(session_id)
+    client_cart = client_ctx.get("cart")
+    if isinstance(client_cart, list):
+        cart_payload = client_cart
+        cart_count = len(client_cart)
+    else:
+        cart_payload = server_cart_snapshot
+        cart_count = cart_state.item_count
+
+    cart_items_map = (
+        client_ctx.get("cart_items_map")
+        if isinstance(client_ctx.get("cart_items_map"), dict)
+        else {}
+    )
+
     context = {
-        "session_id": req.session_id or data_store.session_id,
+        "session_id": session_id,
         "preferences": {},
         "current_page": client_ctx.get("current_page", data_store.current_page),
-        "cart_count": (len(client_ctx.get("cart", [])) if isinstance(client_ctx.get("cart"), list) else data_store.cart.item_count),
-        "cart": client_ctx.get("cart", []),
-        "cart_items_map": client_ctx.get("cart_items_map", {}),
+        "cart_count": cart_count,
+        "cart": cart_payload,
+        "cart_items_map": cart_items_map,
         "current_product": current_product_details,
         "visible_products": visible_products_details,
         "visible_products_map": visible_products_map,
-        "ui_filters": client_ctx.get("ui_filters", {})
+        "ui_filters": client_ctx.get("ui_filters", {}),
     }
 
     history_payload = sanitize_history_entries(client_ctx.get("history"))
@@ -1884,6 +2957,7 @@ async def voice_command(req: VoiceRequest):
 
     try:
         from ai_service import process_voice_command_streaming
+
         async for chunk in process_voice_command_streaming(req.text, context):
             # Filter out any streaming-only events (not expected after recent changes)
             if chunk.get("type") in {"text_chunk", "stream_start", "stream_complete"}:
@@ -1891,7 +2965,12 @@ async def voice_command(req: VoiceRequest):
             events.append(chunk)
     except Exception as e:
         logger.error(f"AI processing error (HTTP): {e}")
-        events.append({"type": "error", "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi."})
+        events.append(
+            {
+                "type": "error",
+                "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi.",
+            }
+        )
 
     # Ensure a final complete event
     if not any(e.get("type") == "complete" for e in events):
@@ -1899,11 +2978,13 @@ async def voice_command(req: VoiceRequest):
 
     return {"events": events}
 
+
 # Information Endpoints
 @app.get("/api/size-guide/{category}")
 async def get_size_guide(category: str):
     """Get size guide for category"""
     return data_store.get_size_guide(category)
+
 
 @app.get("/api/shipping-info")
 async def get_shipping_info():
@@ -1913,12 +2994,12 @@ async def get_shipping_info():
         "standard_shipping": {
             "price": 9.90,
             "delivery_window": "3-5 giorni lavorativi",
-            "carrier": "BRT o GLS"
+            "carrier": "BRT o GLS",
         },
         "express_shipping": {
             "price": 19.90,
             "delivery_window": "1-2 giorni lavorativi",
-            "carrier": "DHL Express"
+            "carrier": "DHL Express",
         },
         "shipping_zones": [
             {
@@ -1926,62 +3007,61 @@ async def get_shipping_info():
                 "standard": {
                     "price": 9.90,
                     "delivery_window": "3-5 giorni lavorativi",
-                    "carrier": "BRT o GLS"
+                    "carrier": "BRT o GLS",
                 },
                 "express": {
                     "price": 19.90,
                     "delivery_window": "1-2 giorni lavorativi",
-                    "carrier": "DHL Express"
+                    "carrier": "DHL Express",
                 },
                 "notes": [
                     "Consegna serale disponibile su Milano e hinterland",
-                    "Tracking in tempo reale incluso"
-                ]
+                    "Tracking in tempo reale incluso",
+                ],
             },
             {
                 "zone": "Isole maggiori e Calabria",
                 "standard": {
                     "price": 12.90,
                     "delivery_window": "4-6 giorni lavorativi",
-                    "carrier": "BRT o GLS"
+                    "carrier": "BRT o GLS",
                 },
                 "express": {
                     "price": 24.90,
                     "delivery_window": "2-3 giorni lavorativi",
-                    "carrier": "DHL Express"
+                    "carrier": "DHL Express",
                 },
-                "notes": [
-                    "I tempi possono estendersi di 24h in alta stagione"
-                ]
-            }
+                "notes": ["I tempi possono estendersi di 24h in alta stagione"],
+            },
         ],
         "pickup_point": {
             "enabled": True,
             "location": "Boutique AIVA Milano Porta Nuova",
             "price": 0.0,
-            "delivery_window": "Pronto al ritiro entro 24 ore lavorative"
+            "delivery_window": "Pronto al ritiro entro 24 ore lavorative",
         },
         "saturday_delivery": {
             "enabled": True,
             "price": 24.90,
             "area": "Milano e hinterland",
-            "cutoff": "Ordina entro le 12:00 del venerdì"
+            "cutoff": "Ordina entro le 12:00 del venerdì",
         },
         "returns": {
             "policy": "Reso gratuito entro 30 giorni",
-            "instructions": "Prenota il ritiro gratuito dal tuo account o visita la boutique con la ricevuta."
+            "instructions": "Prenota il ritiro gratuito dal tuo account o visita la boutique con la ricevuta.",
         },
         "insurance": {
             "included": True,
-            "description": "Copertura danni e smarrimento inclusa in tutte le spedizioni"
+            "description": "Copertura danni e smarrimento inclusa in tutte le spedizioni",
         },
         "customer_service": {
             "email": "supporto@aiva-fashion.demo",
             "phone": "+39 02 1234 5678",
-            "hours": "Lun-Ven 9:00-18:00"
+            "hours": "Lun-Ven 9:00-18:00",
         },
-        "last_update": "2024-02-15"
+        "last_update": "2024-02-15",
     }
+
 
 @app.get("/api/promotions")
 async def get_current_promotions():
@@ -1992,22 +3072,23 @@ async def get_current_promotions():
                 "id": "promo1",
                 "title": "Saldi Invernali",
                 "description": "Fino al 50% su tutta la collezione invernale",
-                "valid_until": "2025-02-28"
+                "valid_until": "2025-02-28",
             },
             {
                 "id": "promo2",
                 "title": "Spedizione Gratuita",
                 "description": "Spedizione gratuita per ordini sopra i 100€",
-                "valid_until": "2025-12-31"
+                "valid_until": "2025-12-31",
             },
             {
                 "id": "promo3",
                 "title": "3x2 T-Shirt",
                 "description": "Prendi 3 t-shirt e paghi solo 2",
-                "valid_until": "2025-03-31"
-            }
+                "valid_until": "2025-03-31",
+            },
         ]
     }
+
 
 # Error Handlers
 @app.exception_handler(HTTPException)
@@ -2019,10 +3100,11 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             "error": {
                 "code": f"HTTP_{exc.status_code}",
                 "message": exc.detail,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
             }
-        }
+        },
     )
+
 
 # Lifecycle Events
 @app.on_event("startup")
@@ -2033,19 +3115,18 @@ async def startup_event():
     logger.info(f"Categories: {list(ProductCategory)}")
     logger.info("Italian language support: ACTIVE")
     logger.info("WebSocket streaming: ENABLED")
-    logger.info("Security features: Rate limiting, Input sanitization, Injection protection")
+    logger.info(
+        "Security features: Rate limiting, Input sanitization, Injection protection"
+    )
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Shutdown event handler"""
     logger.info("AIVA Fashion Backend shutting down...")
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
