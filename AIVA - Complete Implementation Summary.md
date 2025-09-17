@@ -105,6 +105,7 @@
 - 🛒 **Comandi multi-pezzo affidabili**: richieste come “aggiungi due taglie L rosso e una S bianca” vengono parse prima di chiamare l'LLM, generando più add_to_cart con verifica di varianti disponibili e un riepilogo parlato.
 - 🎧 **Esperienza voice fail-safe**: il player TTS parla ogni chunk di frase in coda, mantiene il lock finché l'ultimo pezzo è pronunciato e registra comunque la risposta nel log conversazionale anche quando arriva in streaming.
 
+
 ---
 
 ## 📁 Project Structure
