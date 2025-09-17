@@ -66,6 +66,10 @@ export const useVoiceAssistantNative = () => {
   const assistantTurnBufferRef = useRef('');
   const lastAssistantHistoryRef = useRef('');
   const MAX_HISTORY_ENTRIES = 20;
+  const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
+  const isIOSDevice = isBrowser && /iP(ad|hone|od)/i.test(navigator.userAgent);
+  const isSafari = isBrowser && /Safari/i.test(navigator.userAgent) && !/Chrome|CriOS|Android/i.test(navigator.userAgent);
+  const requiresUserGestureRecognition = isIOSDevice && isSafari;
   // 🔊 Barge-in RMS
   const bargeInCtxRef = useRef(null);
   const bargeInStreamRef = useRef(null);
@@ -186,6 +190,25 @@ export const useVoiceAssistantNative = () => {
     } catch {}
   }, []);
 
+  const resumeAudioPipeline = useCallback(async () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+          await audioCtxRef.current.resume();
+        }
+        if (bargeInCtxRef.current && bargeInCtxRef.current.state === 'suspended') {
+          await bargeInCtxRef.current.resume();
+        }
+      }
+      if (typeof window.speechSynthesis !== 'undefined') {
+        try { window.speechSynthesis.resume(); } catch {}
+      }
+    } catch (err) {
+      console.warn('Audio pipeline resume failed', err);
+    }
+  }, []);
+
   // 🔊 Avvio/stop monitor barge-in: interrompe TTS se rileva voce per ~200ms
   const startBargeInMonitor = useCallback(async () => {
     try {
@@ -237,10 +260,14 @@ export const useVoiceAssistantNative = () => {
     bargeInStreamRef.current = null;
   }, []);
 
-  const safeStopRecognition = useCallback(() => {
+  const safeStopRecognition = useCallback((force = false) => {
+    if (requiresUserGestureRecognition && !force) {
+      setIsListening(false);
+      return;
+    }
+
     if (recognitionRef.current) {
       try {
-        // Evita che onend scateni restart mentre stiamo stoppando volontariamente
         const r = recognitionRef.current;
         recognitionRef.current = null;
         try { r.onend = null; } catch {}
@@ -248,7 +275,7 @@ export const useVoiceAssistantNative = () => {
       } catch {}
     }
     setIsListening(false);
-  }, []);
+  }, [requiresUserGestureRecognition]);
 
   // 🔧 tieni le ref aggiornate quando cambia lo stato:
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
@@ -1045,9 +1072,11 @@ export const useVoiceAssistantNative = () => {
 
     isRestartingRef.current = true;
 
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch {}
-      recognitionRef.current = null;
+    if (!requiresUserGestureRecognition) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+        recognitionRef.current = null;
+      }
     }
 
     setTimeout(() => {
@@ -1058,15 +1087,19 @@ export const useVoiceAssistantNative = () => {
         !isProcessingRef.current
       ) {
         try {
-          recognitionRef.current = initializeSpeechRecognition();
-          if (recognitionRef.current) recognitionRef.current.start();
+          if (!recognitionRef.current) {
+            recognitionRef.current = initializeSpeechRecognition();
+          }
+          if (recognitionRef.current) {
+            try { recognitionRef.current.start(); } catch (err) { console.warn('Recognition restart failed', err); }
+          }
         } catch (e) {
           console.error('Failed to restart:', e);
         }
       }
       isRestartingRef.current = false;
     }, 220); // piccolo delay per non catturare il beep
-  }, [isSpeaking, isExecutingFunction, initializeSpeechRecognition, playReadyBeep]);
+  }, [isSpeaking, isExecutingFunction, initializeSpeechRecognition, playReadyBeep, requiresUserGestureRecognition]);
 
   // Programmatic restart dopo navigazioni/cambi DOM
   const scheduleListenAfterNav = useCallback((delay = 700) => {
@@ -1841,12 +1874,25 @@ export const useVoiceAssistantNative = () => {
       setIsAssistantActive(true);
       isAssistantActiveRef.current = true;
       isRestartingRef.current = false;
-      
+
       resetInactivityTimeout();
-      
+
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         stream.getTracks().forEach(track => track.stop());
+
+        await resumeAudioPipeline();
+
+        if (!recognitionRef.current) {
+          recognitionRef.current = initializeSpeechRecognition();
+        }
+        if (recognitionRef.current) {
+          try {
+            recognitionRef.current.start();
+          } catch (startError) {
+            console.warn('Initial recognition start failed', startError);
+          }
+        }
 
         // Parla prima, poi riapri il mic in onend (evita di catturare l'earcon)
         const welcomeMsg = getWelcomeMessage();
@@ -1871,8 +1917,8 @@ export const useVoiceAssistantNative = () => {
         isAssistantActiveRef.current = false;
       }
     }
-  }, [isListening, isAssistantActive, initializeSpeechRecognition, speak, getWelcomeMessage, 
-      stopAssistant, resetInactivityTimeout]);
+  }, [isListening, isAssistantActive, initializeSpeechRecognition, speak, getWelcomeMessage,
+      stopAssistant, resetInactivityTimeout, resumeAudioPipeline]);
 
   // Cleanup
   useEffect(() => {
