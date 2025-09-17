@@ -14,6 +14,7 @@ const deriveApiBase = () => {
 };
 
 const API_BASE = deriveApiBase();
+
 const API_ROOT = API_BASE.replace(/\/api$/, '');
 
 const buildApiUrl = (endpoint = '') => {
