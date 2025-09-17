@@ -98,6 +98,14 @@
 
 ---
 
+## 🔧 Latest Enhancements
+
+- 🛒 **Cart resilienza lato client**: Lo stato del carrello ora sopravvive ai refresh anche quando il backend serverless torna vuoto, grazie ad una sincronizzazione che privilegia i dati persistiti localmente e ripubblica lo snapshot al rehydrate.
+- 🎙️ **Comprensione categorie potenziata**: L'assistente vocale riconosce subito richieste come “mostrami le scarpe” applicando automaticamente i filtri UI e la ricerca della categoria corretta, anche in fallback offline.
+- 🏷️ **Offerte con variante rapida**: Il pulsante “add to cart” delle card in offerta apre lo stesso selettore taglia/colore della pagina prodotti prima di aggiungere l'articolo al carrello.
+
+---
+
 ## 📁 Project Structure
 
 ```

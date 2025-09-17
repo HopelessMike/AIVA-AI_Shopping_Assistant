@@ -12,6 +12,7 @@ Modern, responsive React frontend for AIVA Fashion - an AI-powered voice shoppin
 - 🔊 **Text-to-Speech**: AI responses spoken back to the user
 - 📊 **Voice Visualizer**: Real-time audio level visualization
 - 💬 **Chat Interface**: Visual conversation history with AI
+- 🧠 **Category-aware Commands**: L'assistente riconosce richieste come "mostrami le scarpe" applicando automaticamente filtri e ricerca di categoria.
 
 ### E-commerce Features
 - 🛍️ **Product Catalog**: 30+ fashion items with variants
@@ -20,6 +21,8 @@ Modern, responsive React frontend for AIVA Fashion - an AI-powered voice shoppin
 - 💳 **Checkout Flow**: Complete purchase process
 - ⭐ **Product Reviews**: Ratings and reviews display
 - 🏷️ **Promotions**: Discount badges and sale prices
+- 🛡️ **Persistenza Carrello**: Il carrello resta disponibile tra i refresh anche con backend stateless grazie alla sincronizzazione locale.
+- 🏷️ **Quick Add Offerte**: Le card della sezione offerte aprono il selettore di taglia e colore prima di aggiungere al carrello.
 
 ### UI/UX Excellence
 - 📱 **Fully Responsive**: Adapts to all screen sizes
