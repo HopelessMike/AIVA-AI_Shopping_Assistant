@@ -137,11 +137,12 @@ aiva-backend/
 - Assicurati che le variabili di ambiente (es. `ALLOWED_ORIGINS`,
   `OPENAI_API_KEY`, `PUBLIC_BASE_URL`) siano configurate nel progetto Vercel.
 
+=======
+
 - Non aggiungere ai `requirements.txt` moduli della standard library Python
   (es. `asyncio`): Vercel li installerà come pacchetti di terze parti
   incompatibili con Python 3.11 causando errori `SyntaxError` in runtime.
 =======
-
 
 ## 🔌 API Endpoints
 

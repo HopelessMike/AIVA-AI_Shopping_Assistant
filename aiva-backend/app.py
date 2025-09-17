@@ -1830,11 +1830,78 @@ async def get_size_guide(category: str):
 async def get_shipping_info():
     """Get shipping information"""
     return {
-        "free_shipping_threshold": 100,
-        "standard_shipping": 9.90,
-        "express_shipping": 19.90,
-        "delivery_time_standard": "3-5 giorni lavorativi",
-        "delivery_time_express": "1-2 giorni lavorativi"
+        "free_shipping_threshold": 100.0,
+        "standard_shipping": {
+            "price": 9.90,
+            "delivery_window": "3-5 giorni lavorativi",
+            "carrier": "BRT o GLS"
+        },
+        "express_shipping": {
+            "price": 19.90,
+            "delivery_window": "1-2 giorni lavorativi",
+            "carrier": "DHL Express"
+        },
+        "shipping_zones": [
+            {
+                "zone": "Italia continentale",
+                "standard": {
+                    "price": 9.90,
+                    "delivery_window": "3-5 giorni lavorativi",
+                    "carrier": "BRT o GLS"
+                },
+                "express": {
+                    "price": 19.90,
+                    "delivery_window": "1-2 giorni lavorativi",
+                    "carrier": "DHL Express"
+                },
+                "notes": [
+                    "Consegna serale disponibile su Milano e hinterland",
+                    "Tracking in tempo reale incluso"
+                ]
+            },
+            {
+                "zone": "Isole maggiori e Calabria",
+                "standard": {
+                    "price": 12.90,
+                    "delivery_window": "4-6 giorni lavorativi",
+                    "carrier": "BRT o GLS"
+                },
+                "express": {
+                    "price": 24.90,
+                    "delivery_window": "2-3 giorni lavorativi",
+                    "carrier": "DHL Express"
+                },
+                "notes": [
+                    "I tempi possono estendersi di 24h in alta stagione"
+                ]
+            }
+        ],
+        "pickup_point": {
+            "enabled": True,
+            "location": "Boutique AIVA Milano Porta Nuova",
+            "price": 0.0,
+            "delivery_window": "Pronto al ritiro entro 24 ore lavorative"
+        },
+        "saturday_delivery": {
+            "enabled": True,
+            "price": 24.90,
+            "area": "Milano e hinterland",
+            "cutoff": "Ordina entro le 12:00 del venerdì"
+        },
+        "returns": {
+            "policy": "Reso gratuito entro 30 giorni",
+            "instructions": "Prenota il ritiro gratuito dal tuo account o visita la boutique con la ricevuta."
+        },
+        "insurance": {
+            "included": True,
+            "description": "Copertura danni e smarrimento inclusa in tutte le spedizioni"
+        },
+        "customer_service": {
+            "email": "supporto@aiva-fashion.demo",
+            "phone": "+39 02 1234 5678",
+            "hours": "Lun-Ven 9:00-18:00"
+        },
+        "last_update": "2024-02-15"
     }
 
 @app.get("/api/promotions")
