@@ -66,8 +66,8 @@ export const useVoiceAssistantNative = () => {
   const bargeInAnalyserRef = useRef(null);
   const bargeInRafRef = useRef(null);
   // Durate finestra di ascolto e chiusura
-  const LISTENING_WINDOW_MS = 11000;
-  const CLOSING_GRACE_MS = 3000;
+  const LISTENING_WINDOW_MS = 9000;
+  const CLOSING_GRACE_MS = 1000;
   const NO_INPUT_MESSAGES = [
     "Se hai bisogno di altro, sono qui.",
     "Ok! Buon proseguimento, chiamami se ti serve aiuto.",
@@ -103,7 +103,7 @@ export const useVoiceAssistantNative = () => {
     "Ecco le offerte del momento.",
     "Ti porto subito tra le promozioni.",
     "Ecco gli sconti attivi ora.",
-    "Guarda qui le proposte in saldo."
+    "Ecco a te le proposte in saldo."
   ];
   const SEARCH_ACK_MESSAGES = [
     "Ecco i risultati che ho trovato.",
@@ -136,7 +136,7 @@ export const useVoiceAssistantNative = () => {
     "Va bene, l'ho eliminato dal carrello."
   ];
   const CART_CLEAR_ACK_MESSAGES = [
-    "Carrello svuotato, partiamo da zero.",
+    "Carrello svuotato.",
     "Ho pulito il carrello, ora è vuoto.",
     "Tutto rimosso, il carrello è di nuovo libero.",
     "Ok, ho eliminato tutti gli articoli dal carrello."
@@ -255,7 +255,7 @@ export const useVoiceAssistantNative = () => {
 
   // ✅ TIMEOUT ESTESO - 60 secondi invece di 30
   const INACTIVITY_TIMEOUT = 60000; // 60 seconds
-  const INTERACTION_CHECK_INTERVAL = 10000; // Check every 10 seconds
+  const INTERACTION_CHECK_INTERVAL = 15000; // Check every 10 seconds
 
   // Welcome messages
 const getWelcomeMessage = useCallback(() => {
