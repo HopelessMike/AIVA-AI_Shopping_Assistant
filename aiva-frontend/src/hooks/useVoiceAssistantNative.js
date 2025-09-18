@@ -1792,6 +1792,24 @@ export const useVoiceAssistantNative = () => {
   }, [restartListening]);
 
   // ✅ STOP ASSISTANT
+  const stopServerAudioPlayback = useCallback(() => {
+    if (serverTTSSourceRef.current) {
+      try {
+        serverTTSSourceRef.current.onended = null;
+        serverTTSSourceRef.current.stop();
+        serverTTSSourceRef.current.disconnect?.();
+      } catch (err) {
+        console.warn('Failed to stop server TTS source', err);
+      }
+      serverTTSSourceRef.current = null;
+    }
+    serverTTSActiveRef.current = false;
+    serverTTSQueueRef.current = [];
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    stopBargeInMonitor();
+  }, [stopBargeInMonitor]);
+
   const stopAssistant = useCallback(() => {
     console.log('🛑 Stopping assistant');
 
@@ -1997,24 +2015,6 @@ export const useVoiceAssistantNative = () => {
     }
     return ctx;
   }, [isBrowser]);
-
-  const stopServerAudioPlayback = useCallback(() => {
-    if (serverTTSSourceRef.current) {
-      try {
-        serverTTSSourceRef.current.onended = null;
-        serverTTSSourceRef.current.stop();
-        serverTTSSourceRef.current.disconnect?.();
-      } catch (err) {
-        console.warn('Failed to stop server TTS source', err);
-      }
-      serverTTSSourceRef.current = null;
-    }
-    serverTTSActiveRef.current = false;
-    serverTTSQueueRef.current = [];
-    setIsSpeaking(false);
-    isSpeakingRef.current = false;
-    stopBargeInMonitor();
-  }, [stopBargeInMonitor]);
 
   const processServerTTSQueue = useCallback(async () => {
     if (serverTTSActiveRef.current) return;
@@ -2606,14 +2606,14 @@ export const useVoiceAssistantNative = () => {
       'blu':'blu', 'blu navy':'blu navy', 'navy':'blu navy', 'blu scuro':'blu navy',
       'azzurro':'azzurro',
       'rosso':'rosso', 'borgogna':'bordeaux', 'bordeaux':'bordeaux',
-      'verde':'verde', 'verde oliva':'verde oliva', 'oliva':'verde oliva',
+      'verde militare':'verde militare', 'militare':'verde militare', 'verde':'verde', 'verde oliva':'verde oliva', 'oliva':'verde oliva',
       'grigio':'grigio', 'grigio melange':'grigio melange', 'melange':'grigio melange', 'antracite':'grigio antracite',
       'beige':'beige', 'panna':'panna', 'crema':'panna',
       'cammello':'cammello',
       'rosa':'rosa',
       'marrone':'marrone',
       'giallo':'giallo',
-      'viola':'viola'
+      'viola':'viola', 'kaki':'kaki', 'khaki':'kaki', 'cachi':'kaki', 'caqui':'kaki'
     };
     const quantityWords = {
       uno: 1,
@@ -2766,8 +2766,8 @@ export const useVoiceAssistantNative = () => {
     // ✅ aggiungi al carrello locale dal prodotto corrente
     if (addToCartRe.test(text) && window.currentProductContext?.id) {
       const m2 = text.match(addToCartRe);
-      const rawSize = (m2?.[3] || '').toLowerCase();
-      const rawColor = (m2?.[4] || '').toLowerCase();
+      const rawSize = (m2?.[4] || '').toLowerCase();
+      const rawColor = (m2?.[6] || '').toLowerCase();
       const availableVariants = Array.isArray(window.currentProductContext?.variants)
         ? window.currentProductContext.variants
         : [];
@@ -2781,6 +2781,12 @@ export const useVoiceAssistantNative = () => {
         || canonColor(rawColor)
         || fallbackColor
         || 'nero';
+      if (color) {
+        const variantColor = availableVariants.find(v => (v.color || '').toLowerCase() === color.toLowerCase());
+        if (variantColor?.color) {
+          color = variantColor.color;
+        }
+      }
       const requestedQuantity = parseQuantityFromText(text);
       const safeQuantity = Math.min(10, Math.max(1, requestedQuantity || 1));
       turnLockRef.current = true;
