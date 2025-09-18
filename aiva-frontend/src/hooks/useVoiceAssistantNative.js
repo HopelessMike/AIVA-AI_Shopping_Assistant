@@ -847,7 +847,42 @@ export const useVoiceAssistantNative = () => {
   }, [ensureListeningAfterSpeech, isOutputSpeaking]);
 
   // ✅ EXECUTE FUNCTION - Unchanged from previous version
-  const executeFunction = useCallback(async (functionName, parameters) => {
+  // NOTE: keeps dependency resolution safe; executeFunction references this hook in its deps array.
+  // Apply UI filters helper
+  const applyUIFilters = useCallback((filters) => {
+    console.log('[filters] Applying UI filters:', filters);
+
+    setTimeout(() => {
+      if (filters.category) {
+        const categorySelect = document.querySelector('select');
+        if (categorySelect) {
+          for (let option of categorySelect.options) {
+            if (option.value.toLowerCase() === filters.category.toLowerCase()) {
+              categorySelect.value = option.value;
+              categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
+              break;
+            }
+          }
+        }
+      }
+
+      if (filters.price_range) {
+        const sortSelect = document.querySelectorAll('select')[1];
+        if (sortSelect) {
+          if (filters.price_range === 'low-to-high') {
+            sortSelect.value = 'price-low';
+          } else if (filters.price_range === 'high-to-low') {
+            sortSelect.value = 'price-high';
+          }
+          sortSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+
+      filterProducts(filters);
+    }, 300);
+  }, [filterProducts]);
+
+const executeFunction = useCallback(async (functionName, parameters) => {
     console.log('🎯 Executing function:', functionName, parameters);
     setIsExecutingFunction(true);
     setCurrentFunction(functionName);
@@ -1440,41 +1475,7 @@ export const useVoiceAssistantNative = () => {
     }, 0);
   }, [executeFunction, isOutputSpeaking]);
 
-  // Apply UI filters helper
-  const applyUIFilters = useCallback((filters) => {
-    console.log('🎨 Applying UI filters:', filters);
-    
-    setTimeout(() => {
-      if (filters.category) {
-        const categorySelect = document.querySelector('select');
-        if (categorySelect) {
-          for (let option of categorySelect.options) {
-            if (option.value.toLowerCase() === filters.category.toLowerCase()) {
-              categorySelect.value = option.value;
-              categorySelect.dispatchEvent(new Event('change', { bubbles: true }));
-              break;
-            }
-          }
-        }
-      }
-      
-      if (filters.price_range) {
-        const sortSelect = document.querySelectorAll('select')[1];
-        if (sortSelect) {
-          if (filters.price_range === 'low-to-high') {
-            sortSelect.value = 'price-low';
-          } else if (filters.price_range === 'high-to-low') {
-            sortSelect.value = 'price-high';
-          }
-          sortSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      }
-      
-      filterProducts(filters);
-    }, 300);
-  }, [filterProducts]);
-
-  const createServerRecognition = useCallback(() => {
+    const createServerRecognition = useCallback(() => {
     if (!shouldUseServerSTT) return null;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
       console.warn('Media devices API not available for server STT fallback');
