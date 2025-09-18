@@ -880,7 +880,7 @@ export const useVoiceAssistantNative = () => {
             'checkout': '/checkout'
           };
           const path = pageMap[parameters.page] || '/';
-          console.log('?Y"? Navigating to:', path);
+          console.log('[nav] Navigating to:', path);
           navigate(path);
           streamBufferRef.current = '';
           dropStaleResponsesRef.current = false;
@@ -1089,7 +1089,7 @@ export const useVoiceAssistantNative = () => {
         }
           
         case 'add_to_cart': {
-          console.log('?Y>' Adding to cart:', parameters);
+          console.log('[cart] Adding to cart:', parameters);
 
           const canonColor = (raw = '') => {
             const map = {
@@ -1219,7 +1219,7 @@ export const useVoiceAssistantNative = () => {
               .trim())(`${product_name} ${size || ''} ${color || ''}`);
             id = window.cartItemsMap?.[key];
           }
-          console.log('?Y- Removing from cart:', id || item_id);
+          console.log('[cart] Removing from cart:', id || item_id);
           if (id) {
             await removeFromCart(id);
             const finalizeRemoval = () => {
