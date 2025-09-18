@@ -226,6 +226,14 @@ export const useVoiceAssistantNative = () => {
     if (isIOSDevice) return true;
     return false;
   }, [isBrowser, isIOSDevice]);
+
+  const isOutputSpeaking = useCallback(() => {
+    const synthSpeaking =
+      typeof window !== 'undefined' && window.speechSynthesis
+        ? window.speechSynthesis.speaking
+        : false;
+    return synthSpeaking || serverTTSActiveRef.current;
+  }, []);
   // 🔊 Barge-in RMS
   const bargeInCtxRef = useRef(null);
   const bargeInStreamRef = useRef(null);
@@ -1278,14 +1286,6 @@ export const useVoiceAssistantNative = () => {
       filterProducts(filters);
     }, 300);
   }, [filterProducts]);
-
-  const isOutputSpeaking = useCallback(() => {
-    const synthSpeaking =
-      typeof window !== 'undefined' && window.speechSynthesis
-        ? window.speechSynthesis.speaking
-        : false;
-    return synthSpeaking || serverTTSActiveRef.current;
-  }, []);
 
   const createServerRecognition = useCallback(() => {
     if (!shouldUseServerSTT) return null;
