@@ -198,6 +198,8 @@ export const useVoiceAssistantNative = () => {
   const selectedVoiceRef = useRef(null); // ✅ NUOVO: Memorizza la voce selezionata
   const conversationHistoryRef = useRef([]);
   const assistantTurnBufferRef = useRef('');
+  const ackTurnRef = useRef({ onceSpoken: false });
+  const isListeningRef = useRef(false);
   const lastAssistantHistoryRef = useRef('');
   const MAX_HISTORY_ENTRIES = 20;
   const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
@@ -378,6 +380,32 @@ export const useVoiceAssistantNative = () => {
     const choice = randomFrom(pool.length > 0 ? pool : options) || fallback || options[0];
     ackHistoryRef.current[key] = choice;
     return choice || fallback;
+  }, []);
+
+  const speakAckManaged = useCallback((key, messages = [], fallback = '', onEnd, options = {}) => {
+    const { oncePerTurn = false, overrideText = null, immediate = false } = options || {};
+    const resolvedText = (overrideText || pickAck(key, messages, fallback) || '').trim();
+    if (!resolvedText) {
+      if (typeof onEnd === 'function') onEnd();
+      return;
+    }
+    if (oncePerTurn) {
+      if (ackTurnRef.current.onceSpoken) {
+        if (typeof onEnd === 'function') onEnd();
+        return;
+      }
+      ackTurnRef.current.onceSpoken = true;
+    }
+    const speakFn = speakRef.current;
+    if (typeof speakFn === 'function') {
+      speakFn(resolvedText, onEnd, immediate, { enqueue: false });
+    } else if (typeof onEnd === 'function') {
+      onEnd();
+    }
+  }, [pickAck]);
+
+  const resetAckTurn = useCallback(() => {
+    ackTurnRef.current.onceSpoken = false;
   }, []);
 
   const clearListeningTimers = useCallback(() => {
@@ -574,6 +602,15 @@ export const useVoiceAssistantNative = () => {
           dropStaleResponsesRef.current = true;
           isStreamingTTSRef.current = false;
           setIsSpeaking(false);  isSpeakingRef.current = false;
+      if (
+        turnLockRef.current &&
+        !isProcessingRef.current &&
+        !isExecutingFunctionRef.current &&
+        !isSpeakingRef.current &&
+        functionQueueRef.current.length === 0
+      ) {
+        turnLockRef.current = false;
+      }
           setIsProcessing(false); isProcessingRef.current = false;
           turnLockRef.current = false;
           stopBargeInMonitor();
@@ -619,6 +656,7 @@ export const useVoiceAssistantNative = () => {
   useEffect(() => { isExecutingFunctionRef.current = isExecutingFunction; }, [isExecutingFunction]);
   useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
   useEffect(() => { isConnectedRef.current = isConnected; }, [isConnected]);
+  useEffect(() => { isListeningRef.current = isListening; }, [isListening]);
 
   // drainFunctionQueue is defined after executeFunction to avoid TDZ
 
@@ -777,6 +815,25 @@ export const useVoiceAssistantNative = () => {
   }, [pushHistoryEntry, applyListeningProfileForAssistantText]);
 
   // ✅ RILASCIO TURNO SICURO post TTS
+
+  const ensureListeningAfterSpeech = useCallback((attempt = 0) => {
+    if (attempt > 3) return;
+    if (!isAssistantActiveRef.current) return;
+    if (
+      isListeningRef.current ||
+      isProcessingRef.current ||
+      isSpeakingRef.current ||
+      functionQueueRef.current.length > 0 ||
+      isOutputSpeaking()
+    ) {
+      return;
+    }
+    if (restartListeningRef.current) {
+      restartListeningRef.current();
+      setTimeout(() => ensureListeningAfterSpeech(attempt + 1), 300 + attempt * 200);
+    }
+  }, [isOutputSpeaking]);
+
   const releaseTurnIfIdle = useCallback(() => {
     if (!isOutputSpeaking() && !isSpeakingRef.current && utterQueueRef.current.length === 0) {
       turnLockRef.current = false;
@@ -784,9 +841,10 @@ export const useVoiceAssistantNative = () => {
       isProcessingRef.current = false;
       if (isAssistantActiveRef.current && functionQueueRef.current.length === 0) {
         if (restartListeningRef.current) restartListeningRef.current();
+        setTimeout(() => ensureListeningAfterSpeech(), 180);
       }
     }
-  }, [isOutputSpeaking]);
+  }, [ensureListeningAfterSpeech, isOutputSpeaking]);
 
   // ✅ EXECUTE FUNCTION - Unchanged from previous version
   const executeFunction = useCallback(async (functionName, parameters) => {
@@ -810,7 +868,7 @@ export const useVoiceAssistantNative = () => {
       
       switch (functionName) {
         case 'navigate_to_page':
-        case 'navigate':
+        case 'navigate': {
           const pageMap = {
             'home': '/',
             'prodotti': '/products',
@@ -822,32 +880,109 @@ export const useVoiceAssistantNative = () => {
             'checkout': '/checkout'
           };
           const path = pageMap[parameters.page] || '/';
-          console.log('📍 Navigating to:', path);
+          console.log('?Y"? Navigating to:', path);
           navigate(path);
-          // reset di sicurezza prima dell'ack
           streamBufferRef.current = '';
           dropStaleResponsesRef.current = false;
-          const navAck = path === '/cart'
-            ? pickAck('nav-cart', NAV_ACK_CART, 'Ecco il carrello.')
-            : path === '/offers'
-              ? pickAck('nav-offers', NAV_ACK_OFFERS, 'Ecco le offerte.')
-              : pickAck('nav-default', NAV_ACK_DEFAULT, 'Ecco.');
-          // conferma breve + rilascio turno in onEnd
-          speak(
-            navAck || 'Ecco!',
-            () => {
-              // fine ack → chiudi loading e riapri mic
-              setIsProcessing(false); isProcessingRef.current = false;
+
+          if (path === '/products') {
+            const shouldResetFilters = parameters.resetFilters === true;
+            let mergedFilters = {};
+            if (shouldResetFilters) {
+              try {
+                clearFilters();
+                setSearchQuery('');
+                if (typeof window !== 'undefined') {
+                  window.productsSearchQuery = '';
+                  window.productsSelectedCategory = '';
+                }
+              } catch (err) {
+                console.warn('Failed to reset filters on navigation', err);
+              }
+            }
+            if (parameters.filters && typeof parameters.filters === 'object') {
+              mergedFilters = { ...parameters.filters };
+            }
+            if (parameters.category && !mergedFilters.category) {
+              mergedFilters.category = parameters.category;
+            }
+
+            const nextQueued = functionQueueRef.current[0];
+            if (
+              nextQueued &&
+              nextQueued.name === 'apply_ui_filters' &&
+              nextQueued.params &&
+              typeof nextQueued.params.filters === 'object'
+            ) {
+              mergedFilters = { ...mergedFilters, ...nextQueued.params.filters };
+              functionQueueRef.current.shift();
+            } else if (
+              nextQueued &&
+              nextQueued.name === 'search_products' &&
+              nextQueued.params &&
+              !nextQueued.params.query &&
+              typeof nextQueued.params.filters === 'object'
+            ) {
+              mergedFilters = { ...mergedFilters, ...nextQueued.params.filters };
+              functionQueueRef.current.shift();
+            }
+
+            const applyFiltersAfterNav = (payload) => {
+              const targetFilters = payload && Object.keys(payload).length > 0 ? payload : {};
+              setTimeout(() => {
+                try {
+                  if (Object.keys(targetFilters).length > 0) {
+                    setMultipleFilters(targetFilters);
+                  } else if (shouldResetFilters) {
+                    clearFilters();
+                  }
+                  if (typeof window !== 'undefined' && typeof window.applyProductFilters === 'function') {
+                    window.applyProductFilters(targetFilters);
+                  } else {
+                    applyUIFilters(targetFilters);
+                  }
+                } catch (err) {
+                  console.warn('Failed to apply filters after navigation', err);
+                }
+              }, 350);
+            };
+
+            if (Object.keys(mergedFilters).length > 0) {
+              applyFiltersAfterNav(mergedFilters);
+            } else if (shouldResetFilters) {
+              applyFiltersAfterNav({});
+            }
+          }
+
+          const navAckConfig =
+            path === '/cart'
+              ? { key: 'nav-cart', messages: NAV_ACK_CART, fallback: 'Ecco il carrello.' }
+              : path === '/offers'
+                ? { key: 'nav-offers', messages: NAV_ACK_OFFERS, fallback: 'Ecco le offerte.' }
+                : { key: 'nav-default', messages: NAV_ACK_DEFAULT, fallback: 'Ecco.' };
+
+          const releaseAfterNav = () => {
+            const hasMore = functionQueueRef.current.length > 0;
+            setIsProcessing(false); isProcessingRef.current = false;
+            if (!hasMore) {
               turnLockRef.current = false;
               if (restartListeningRef.current) restartListeningRef.current();
-            },
-            false,
-            { enqueue: false }
+            } else {
+      resetAckTurn();
+              turnLockRef.current = true;
+            }
+          };
+
+          speakAckManaged(
+            navAckConfig.key,
+            navAckConfig.messages,
+            navAckConfig.fallback,
+            releaseAfterNav,
+            { oncePerTurn: true }
           );
-          // fallback: se l'ack fosse mutato, prova comunque dopo la nav
           scheduleListenAfterNav(1000);
           break;
-          
+        }
         case 'search_products':
           const query = parameters.query || '';
           const filters = parameters.filters || {};
@@ -884,11 +1019,17 @@ export const useVoiceAssistantNative = () => {
             }, 500);
           }
           // Ack e rilascio del turno al termine
-          speak(pickAck('search', SEARCH_ACK_MESSAGES, 'Ecco i risultati.'), () => {
+          const finalizeSearch = () => {
+            const hasMore = functionQueueRef.current.length > 0;
             setIsProcessing(false); isProcessingRef.current = false;
-            turnLockRef.current = false;
-            if (restartListeningRef.current) restartListeningRef.current();
-          }, false, { enqueue: false });
+            if (!hasMore) {
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            } else {
+              turnLockRef.current = true;
+            }
+          };
+          speakAckManaged('search', SEARCH_ACK_MESSAGES, 'Ecco i risultati.', finalizeSearch, { oncePerTurn: true });
           break;
 
         
@@ -900,22 +1041,34 @@ export const useVoiceAssistantNative = () => {
           } else {
             applyUIFilters(parameters.filters || {});
           }
-          speak(pickAck('filters', FILTER_ACK_MESSAGES, 'Filtri applicati.'), () => {
+          const finalizeFilters = () => {
+            const hasMore = functionQueueRef.current.length > 0;
             setIsProcessing(false); isProcessingRef.current = false;
-            turnLockRef.current = false;
-            if (restartListeningRef.current) restartListeningRef.current();
-          }, false, { enqueue: false });
+            if (!hasMore) {
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            } else {
+              turnLockRef.current = true;
+            }
+          };
+          speakAckManaged('filters', FILTER_ACK_MESSAGES, 'Filtri applicati.', finalizeFilters, { oncePerTurn: true });
           break;
           
         case 'get_product_details':
           const productId = parameters.product_id;
           console.log('📦 Showing product:', productId);
           navigate(`/products/${productId}`);
-          speak(pickAck('product', PRODUCT_ACK_MESSAGES, 'Ecco la scheda.'), () => {
+          const finalizeProductNav = () => {
+            const hasMore = functionQueueRef.current.length > 0;
             setIsProcessing(false); isProcessingRef.current = false;
-            turnLockRef.current = false;
-            if (restartListeningRef.current) restartListeningRef.current();
-          }, false, { enqueue: false });
+            if (!hasMore) {
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            } else {
+              turnLockRef.current = true;
+            }
+          };
+          speakAckManaged('product', PRODUCT_ACK_MESSAGES, 'Ecco la scheda.', finalizeProductNav, { oncePerTurn: true });
           break;
 
         case 'open_product_by_name': {
@@ -936,7 +1089,7 @@ export const useVoiceAssistantNative = () => {
         }
           
         case 'add_to_cart': {
-          console.log('🛒 Adding to cart:', parameters);
+          console.log('?Y>' Adding to cart:', parameters);
 
           const canonColor = (raw = '') => {
             const map = {
@@ -1021,10 +1174,29 @@ export const useVoiceAssistantNative = () => {
               if (!ok) throw new Error('Remote cart update failed');
             }
 
-            speak(pickAck('cart-add', CART_ADD_ACK_MESSAGES, 'Aggiunto al carrello.'), () => {
+            const skipAck = parameters.skipAck === true;
+            const overrideAck = typeof parameters.overrideAck === 'string' ? parameters.overrideAck : null;
+            const finalizeAddToCart = () => {
+              const hasMore = functionQueueRef.current.length > 0;
               setIsProcessing(false); isProcessingRef.current = false;
-              releaseTurnIfIdle();
-            }, false, { enqueue: false });
+              if (!hasMore) {
+                releaseTurnIfIdle();
+              } else {
+                turnLockRef.current = true;
+              }
+            };
+
+            if (skipAck) {
+              finalizeAddToCart();
+            } else {
+              speakAckManaged(
+                'cart-add',
+                CART_ADD_ACK_MESSAGES,
+                'Aggiunto al carrello.',
+                finalizeAddToCart,
+                { oncePerTurn: false, overrideText: overrideAck || undefined }
+              );
+            }
           } catch (error) {
             console.error('Error adding to cart:', error);
             speak('Non sono riuscita ad aggiungerlo al carrello.', () => {
@@ -1034,7 +1206,6 @@ export const useVoiceAssistantNative = () => {
           }
           break;
         }
-          
         case 'remove_from_cart': {
           const { item_id, product_name, size, color } = parameters || {};
           let id = item_id;
@@ -1048,21 +1219,24 @@ export const useVoiceAssistantNative = () => {
               .trim())(`${product_name} ${size || ''} ${color || ''}`);
             id = window.cartItemsMap?.[key];
           }
-          console.log('🗑️ Removing from cart:', id || item_id);
+          console.log('?Y- Removing from cart:', id || item_id);
           if (id) {
             await removeFromCart(id);
-            speak(pickAck('cart-remove', CART_REMOVE_ACK_MESSAGES, 'Rimosso dal carrello.'));
+            const finalizeRemoval = () => {
+              const hasMore = functionQueueRef.current.length > 0;
+              setIsProcessing(false); isProcessingRef.current = false;
+              if (!hasMore) {
+                releaseTurnIfIdle();
+              } else {
+                turnLockRef.current = true;
+              }
+            };
+            speakAckManaged('cart-remove', CART_REMOVE_ACK_MESSAGES, 'Rimosso dal carrello.', finalizeRemoval, { oncePerTurn: false });
           } else {
             speak('Non trovo quel prodotto nel carrello. Puoi ripetere il nome o dirmi la taglia e il colore?');
           }
           break;
         }
-          
-        case 'remove_last_cart_item':
-          console.log('🗑️ Removing last cart item');
-          await removeLastItem();
-          break;
-          
         case 'update_cart_quantity':
           console.log('📝 Updating quantity:', parameters);
           if (parameters.item_id && parameters.quantity) {
@@ -1074,21 +1248,33 @@ export const useVoiceAssistantNative = () => {
         case 'view_cart':
           console.log('🛒 Opening cart');
           navigate('/cart');
-          speak(pickAck('nav-cart', NAV_ACK_CART, 'Ecco il carrello.'), () => {
+          const finalizeCartView = () => {
+            const hasMore = functionQueueRef.current.length > 0;
             setIsProcessing(false); isProcessingRef.current = false;
-            turnLockRef.current = false;
-            if (restartListeningRef.current) restartListeningRef.current();
-          }, false, { enqueue: false });
+            if (!hasMore) {
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            } else {
+              turnLockRef.current = true;
+            }
+          };
+          speakAckManaged('nav-cart', NAV_ACK_CART, 'Ecco il carrello.', finalizeCartView, { oncePerTurn: true });
           break;
           
         case 'clear_cart':
           console.log('🗑️ Clearing cart');
           await clearCartAction();
-          speak(pickAck('cart-clear', CART_CLEAR_ACK_MESSAGES, 'Carrello svuotato.'), () => {
+          const finalizeClearCart = () => {
+            const hasMore = functionQueueRef.current.length > 0;
             setIsProcessing(false); isProcessingRef.current = false;
-            turnLockRef.current = false;
-            if (restartListeningRef.current) restartListeningRef.current();
-          }, false, { enqueue: false });
+            if (!hasMore) {
+              turnLockRef.current = false;
+              if (restartListeningRef.current) restartListeningRef.current();
+            } else {
+              turnLockRef.current = true;
+            }
+          };
+          speakAckManaged('cart-clear', CART_CLEAR_ACK_MESSAGES, 'Carrello svuotato.', finalizeClearCart, { oncePerTurn: false });
           break;
           
         case 'get_current_promotions':
@@ -1222,7 +1408,8 @@ export const useVoiceAssistantNative = () => {
         }, 200); // ⬅️ più reattivo
     }
   }, [navigate, addToCart, removeFromCart, clearCartAction, removeLastItem, updateQuantity,
-      setSearchQuery, setMultipleFilters, isSpeaking, pickAck, isOutputSpeaking]);
+      setSearchQuery, setMultipleFilters, clearFilters, applyUIFilters, scheduleListenAfterNav,
+      speakAckManaged, releaseTurnIfIdle, isSpeaking, isOutputSpeaking]);
 
   // Now define drainFunctionQueue after executeFunction to avoid TDZ
   const drainFunctionQueue = useCallback(() => {
@@ -2713,10 +2900,15 @@ export const useVoiceAssistantNative = () => {
       drainFunctionQueue();
       return;
     }
+
     if (goProducts.test(lower)) {
-      turnLockRef.current = true;
+      const shouldResetFilters = /(tutti|mostra tutto|mostrami tutto|catalogo)/.test(lower);
       setIsProcessing(true); isProcessingRef.current = true;
-      functionQueueRef.current.push({ name: 'navigate_to_page', params: { page: 'prodotti' } });
+      const params = { page: 'prodotti' };
+      if (shouldResetFilters) {
+        params.resetFilters = true;
+      }
+      functionQueueRef.current.push({ name: 'navigate_to_page', params });
       drainFunctionQueue();
       return;
     }
@@ -2764,41 +2956,124 @@ export const useVoiceAssistantNative = () => {
       return;
     }
     // ✅ aggiungi al carrello locale dal prodotto corrente
+
     if (addToCartRe.test(text) && window.currentProductContext?.id) {
-      const m2 = text.match(addToCartRe);
-      const rawSize = (m2?.[4] || '').toLowerCase();
-      const rawColor = (m2?.[6] || '').toLowerCase();
       const availableVariants = Array.isArray(window.currentProductContext?.variants)
         ? window.currentProductContext.variants
         : [];
       const fallbackSize = availableVariants[0]?.size || 'M';
       const fallbackColor = availableVariants[0]?.color || 'nero';
-      const size = (sizeMap[rawSize] || fallbackSize || 'M').toUpperCase();
-      const colorCandidates = extractColorCandidates(rawColor);
-      const availableColors = new Set(availableVariants.map(v => (v.color || '').toLowerCase()));
-      let color = colorCandidates.find(c => availableColors.has(c.toLowerCase()))
-        || colorCandidates[0]
-        || canonColor(rawColor)
-        || fallbackColor
-        || 'nero';
-      if (color) {
-        const variantColor = availableVariants.find(v => (v.color || '').toLowerCase() === color.toLowerCase());
-        if (variantColor?.color) {
-          color = variantColor.color;
-        }
-      }
+
       const requestedQuantity = parseQuantityFromText(text);
-      const safeQuantity = Math.min(10, Math.max(1, requestedQuantity || 1));
+      const defaultQuantity = clampQuantity(requestedQuantity ?? 1, 1);
+
+      const deriveSize = (token = '') => {
+        const normalized = token.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const mapped = sizeMap[normalized];
+        const value = mapped || token || fallbackSize || 'M';
+        return value.toString().toUpperCase();
+      };
+
+      const availableColors = new Set(availableVariants.map(v => (v.color || '').toLowerCase()));
+
+      const resolveColorFrom = (raw = '') => {
+        const candidates = extractColorCandidates(raw);
+        let colorCandidate = candidates.find(c => availableColors.has(c.toLowerCase()))
+          || candidates[0]
+          || canonColor(raw);
+        if (!colorCandidate) colorCandidate = fallbackColor || 'nero';
+        const variantColor = availableVariants.find(v => (v.color || '').toLowerCase() === colorCandidate.toLowerCase());
+        return variantColor?.color || colorCandidate;
+      };
+
+      const detectQuantityAround = (idx) => {
+        const windowSize = 40;
+        const startIdx = Math.max(0, idx - windowSize);
+        const endIdx = Math.min(text.length, idx + windowSize);
+        const scope = text
+          .slice(startIdx, endIdx)
+          .normalize('NFD')
+          .replace(/\p{Diacritic}/gu, '')
+          .toLowerCase();
+        const digitMatch = scope.match(/(\d{1,2})\s*(pezzi|pezzo|articoli|prodotti|paia|capi)?/);
+        if (digitMatch) {
+          const parsed = parseInt(digitMatch[1], 10);
+          if (Number.isFinite(parsed)) return parsed;
+        }
+        for (const [word, value] of Object.entries(quantityWords)) {
+          const regex = new RegExp(`\b${word}\b`, 'i');
+          if (regex.test(scope)) {
+            return value;
+          }
+        }
+        return null;
+      };
+
+      const requests = [];
+      const seenVariants = new Set();
+      const addRequest = (req) => {
+        if (!req || !req.size) return;
+        const key = `${req.size.toUpperCase()}|${(req.color || '').toLowerCase()}`;
+        if (seenVariants.has(key)) return;
+        seenVariants.add(key);
+        const safeQuantity = clampQuantity(req.quantity ?? defaultQuantity, defaultQuantity);
+        requests.push({
+          size: req.size.toUpperCase(),
+          color: req.color,
+          quantity: safeQuantity
+        });
+      };
+
+      const initialMatch = text.match(addToCartRe);
+      if (initialMatch) {
+        const primarySize = deriveSize(initialMatch[4] || fallbackSize);
+        const primaryColor = resolveColorFrom(initialMatch[6] || fallbackColor);
+        addRequest({ size: primarySize, color: primaryColor, quantity: defaultQuantity });
+      }
+
+      const variantRegex = /taglia\s+([a-z0-9]{1,3}|xxs|xs|s|m|l|xl|xxl|xxxl)/gi;
+      const variantMatches = Array.from(text.matchAll(variantRegex));
+      variantMatches.forEach(match => {
+        const matchIndex = match.index ?? 0;
+        const sizeToken = match[1] || '';
+        const segment = text.slice(matchIndex, matchIndex + 120);
+        const quantityNearby = detectQuantityAround(matchIndex);
+        const resolvedSize = deriveSize(sizeToken || fallbackSize);
+        const resolvedColor = resolveColorFrom(segment || fallbackColor);
+        addRequest({ size: resolvedSize, color: resolvedColor, quantity: quantityNearby ?? defaultQuantity });
+      });
+
+      if (requests.length === 0) {
+        addRequest({
+          size: deriveSize(fallbackSize),
+          color: resolveColorFrom(fallbackColor),
+          quantity: defaultQuantity
+        });
+      }
+
+      const productId = window.currentProductContext.id;
+      const productName = window.currentProductContext?.name || 'questo prodotto';
+      const multiAck =
+        requests.length > 1
+          ? `Ho aggiunto ${requests.length} varianti di ${productName} al carrello.`
+          : null;
+
       turnLockRef.current = true;
       setIsProcessing(true); isProcessingRef.current = true;
-      functionQueueRef.current.push({
-        name: 'add_to_cart',
-        params: {
-          product_id: window.currentProductContext.id,
-          size,
-          color,
-          quantity: safeQuantity
-        }
+
+      requests.forEach((req, idx) => {
+        const isLast = idx === requests.length - 1;
+        functionQueueRef.current.push({
+          name: 'add_to_cart',
+          params: {
+            product_id: productId,
+            size: req.size,
+            color: req.color,
+            quantity: req.quantity,
+            skipAck: requests.length > 1 && !isLast,
+            overrideAck: isLast && multiAck ? multiAck : undefined
+          }
+        });
       });
       drainFunctionQueue();
       return;
@@ -2875,7 +3150,10 @@ export const useVoiceAssistantNative = () => {
     ensureCurrentProductContext,
     setListeningProfile,
     isOutputSpeaking,
-    stopServerAudioPlayback
+    stopServerAudioPlayback,
+    resetAckTurn,
+    drainFunctionQueue,
+    buildCartSpeechSummary
   ]);
 
   useEffect(() => {
@@ -2936,6 +3214,7 @@ export const useVoiceAssistantNative = () => {
             ) {
               if (restartListeningRef.current) restartListeningRef.current();
             }
+            setTimeout(() => ensureListeningAfterSpeech(), 180);
           }, 250);
         }, true, { enqueue: false });
         // non tenere il lock all'avvio
@@ -2958,7 +3237,8 @@ export const useVoiceAssistantNative = () => {
     resumeAudioPipeline,
     setListeningProfile,
     cancelFinalResultTimer,
-    isOutputSpeaking
+    isOutputSpeaking,
+    ensureListeningAfterSpeech
   ]);
 
   // Cleanup

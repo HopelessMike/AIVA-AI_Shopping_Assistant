@@ -88,7 +88,8 @@ export function buildCartSpeechSummary(limit = 5) {
       const qty = it?.quantity || 1;
       const size = it?.size ? `, taglia ${it.size}` : '';
       const color = it?.color ? `, ${it.color}` : '';
-      parts.push(`${qty} x ${name}${size}${color}`);
+      const qtyLabel = qty === 1 ? 'pezzo' : 'pezzi';
+      parts.push(`${qty} ${qtyLabel} di ${name}${size}${color}`);
     }
     const rest = items.length - Math.min(items.length, limit);
     const tail = rest > 0 ? `, e altri ${rest} articoli.` : '.';
