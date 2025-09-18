@@ -40,6 +40,12 @@ orjson==3.9.10
 # Logging
 colorlog==6.8.0
 
+# Offline speech stack (server-side fallback)
+vosk==0.3.45
+numpy==1.26.2
+pyttsx3==2.90
+gTTS==2.5.1
+
 # Rate limiting
 slowapi==0.1.9
 

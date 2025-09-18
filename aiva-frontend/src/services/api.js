@@ -191,6 +191,49 @@ export const voiceAPI = {
     );
     if (!res.ok) throw new Error(`POST /voice/command ${res.status}`);
     return res.json();
+  },
+
+  async transcribeAudio({ audio, sampleRate = 16000, language = 'it-IT', sessionId } = {}) {
+    const resolvedSessionId = sessionId || getSessionId();
+    const payload = {
+      audio,
+      sample_rate: sampleRate,
+      language,
+      session_id: resolvedSessionId
+    };
+
+    const res = await fetch(
+      `${API_BASE}/speech-to-text`,
+      withSessionHeaders({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      })
+    );
+    if (!res.ok) throw new Error(`POST /speech-to-text ${res.status}`);
+    return res.json();
+  },
+
+  async synthesizeSpeech({ text, voice, sessionId } = {}) {
+    const resolvedSessionId = sessionId || getSessionId();
+    const payload = {
+      text,
+      voice,
+      session_id: resolvedSessionId
+    };
+
+    const res = await fetch(
+      `${API_BASE}/tts`,
+      withSessionHeaders({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      })
+    );
+    if (!res.ok) throw new Error(`POST /tts ${res.status}`);
+    return res.json();
   }
 };
 
