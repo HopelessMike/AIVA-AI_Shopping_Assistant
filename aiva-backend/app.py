@@ -33,6 +33,9 @@ from functools import wraps
 import asyncio
 from enum import Enum
 
+from speech_service import transcribe_pcm16
+from tts_service import synthesize_speech
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AIVA")
@@ -457,6 +460,26 @@ class VoiceRequest(BaseModel):
     def sanitize_and_normalize(cls, v):
         v = sanitize_input(v)
         return v  # Keep original for AI, normalize separately for search
+
+
+class SpeechToTextRequest(BaseModel):
+    audio: str
+    sample_rate: int = Field(default=16000, ge=8000, le=48000)
+    language: Optional[str] = Field(default="it-IT", max_length=10)
+    session_id: Optional[str] = None
+
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = Field(default=None, max_length=64)
+    session_id: Optional[str] = None
+
+    @validator("text")
+    def ensure_text(cls, v):
+        sanitized = sanitize_input(v)
+        if not sanitized:
+            raise ValueError("Testo mancante per la sintesi vocale")
+        return sanitized
 
 
 class SearchFilters(BaseModel):
@@ -2977,6 +3000,62 @@ async def voice_command(req: VoiceRequest, request: Request, response: Response)
         events.append({"type": "complete", "message": None})
 
     return {"events": events}
+
+
+@app.post("/api/speech-to-text")
+async def speech_to_text_endpoint(
+    payload: SpeechToTextRequest, request: Request, response: Response
+):
+    session_id, created = resolve_session_id(request, payload.session_id)
+    if created:
+        ensure_session_cookie(response, session_id)
+
+    try:
+        result = await transcribe_pcm16(
+            payload.audio,
+            sample_rate=payload.sample_rate,
+            language=payload.language or "it-IT",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not result.success:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Trascrizione audio non disponibile",
+                "reason": result.reason or "unknown",
+            },
+        )
+
+    return {
+        "text": result.text,
+        "confidence": result.confidence,
+        "session_id": session_id,
+    }
+
+
+@app.post("/api/tts")
+async def tts_endpoint(payload: TTSRequest, request: Request, response: Response):
+    session_id, created = resolve_session_id(request, payload.session_id)
+    if created:
+        ensure_session_cookie(response, session_id)
+
+    result = await synthesize_speech(payload.text, voice=payload.voice)
+    if not result.success:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Sintesi vocale non disponibile",
+                "reason": result.reason or "unknown",
+            },
+        )
+
+    return {
+        "audio": result.audio_base64,
+        "mime_type": result.mime_type,
+        "session_id": session_id,
+    }
 
 
 # Information Endpoints

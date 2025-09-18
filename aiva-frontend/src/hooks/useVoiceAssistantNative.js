@@ -1,5 +1,5 @@
 // src/hooks/useVoiceAssistantNative.js - VERSIONE DEFINITIVA FIXATA
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { createWebSocketConnection, productAPI, infoAPI, voiceAPI } from '../services/api';
 import { getSessionId } from '../utils/session';
@@ -22,6 +22,77 @@ const stripMarkdown = (s = '') =>
     .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
     .replace(/\s{2,}/g, ' ')
     .trim();
+
+const PCM_TARGET_SAMPLE_RATE = 16000;
+
+const mergeFloat32Chunks = (chunks = []) => {
+  if (!Array.isArray(chunks) || chunks.length === 0) return new Float32Array(0);
+  const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const merged = new Float32Array(total);
+  let offset = 0;
+  chunks.forEach(chunk => {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  });
+  return merged;
+};
+
+const resampleFloat32 = (data, originalRate, targetRate = PCM_TARGET_SAMPLE_RATE) => {
+  if (!data || !data.length || !originalRate || originalRate === targetRate) {
+    return data || new Float32Array(0);
+  }
+  const ratio = originalRate / targetRate;
+  const newLength = Math.round(data.length / ratio);
+  const resampled = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetSource = 0;
+  while (offsetResult < resampled.length) {
+    const nextOffset = Math.round((offsetResult + 1) * ratio);
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetSource; i < nextOffset && i < data.length; i += 1) {
+      accum += data[i];
+      count += 1;
+    }
+    resampled[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult += 1;
+    offsetSource = nextOffset;
+  }
+  return resampled;
+};
+
+const float32ToPCM16 = (data) => {
+  const buffer = new ArrayBuffer(data.length * 2);
+  const view = new DataView(buffer);
+  let offset = 0;
+  for (let i = 0; i < data.length; i += 1, offset += 2) {
+    const sample = Math.max(-1, Math.min(1, data[i] || 0));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+  return new Uint8Array(buffer);
+};
+
+const arrayBufferToBase64 = (buffer) => {
+  if (!buffer) return '';
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode.apply(null, slice);
+  }
+  return btoa(binary);
+};
+
+const base64ToArrayBuffer = (base64) => {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
 
 const normalizeVariantForContext = (variant = {}) => ({
   size: typeof variant.size === 'string' ? variant.size : variant.size?.value,
@@ -111,6 +182,10 @@ export const useVoiceAssistantNative = () => {
   const streamReleasePendingRef = useRef(false);
   const utterQueueRef = useRef([]);
   const ttsSafetyTimerRef = useRef(null);
+  const serverTTSQueueRef = useRef([]);
+  const serverTTSAudioCtxRef = useRef(null);
+  const serverTTSSourceRef = useRef(null);
+  const serverTTSActiveRef = useRef(false);
   // ⛔ Scarta messaggi WS residui del turno precedente (attivo dopo barge-in)
   const dropStaleResponsesRef = useRef(false);
   const hasSpokenThisTurnRef = useRef(false);
@@ -129,6 +204,20 @@ export const useVoiceAssistantNative = () => {
   const isSafari = isBrowser && /Safari/i.test(navigator.userAgent) && !/Chrome|CriOS|Android/i.test(navigator.userAgent);
   const requiresUserGestureRecognition = isIOSDevice && isSafari;
   const speechPrimedRef = useRef(false);
+  const serverSTTStateRef = useRef({ active: false, aborting: false });
+  const shouldUseServerSTT = useMemo(() => {
+    if (!isBrowser) return false;
+    if (!browserSupportsSpeechRecognition()) return true;
+    if (isIOSDevice) return true;
+    return false;
+  }, [isBrowser, browserSupportsSpeechRecognition, isIOSDevice]);
+  const shouldUseServerTTS = useMemo(() => {
+    if (!isBrowser) return false;
+    if (typeof window === 'undefined') return false;
+    if (!('speechSynthesis' in window)) return true;
+    if (isIOSDevice) return true;
+    return false;
+  }, [isBrowser, isIOSDevice]);
   // 🔊 Barge-in RMS
   const bargeInCtxRef = useRef(null);
   const bargeInStreamRef = useRef(null);
@@ -273,7 +362,7 @@ export const useVoiceAssistantNative = () => {
     const choice = randomFrom(pool.length > 0 ? pool : options) || fallback || options[0];
     ackHistoryRef.current[key] = choice;
     return choice || fallback;
-  }, []);
+  }, [stopServerAudioPlayback]);
 
   const clearListeningTimers = useCallback(() => {
     if (listeningTimerRef.current) { clearTimeout(listeningTimerRef.current); listeningTimerRef.current = null; }
@@ -570,9 +659,10 @@ export const useVoiceAssistantNative = () => {
     isAssistantActiveRef.current = isAssistantActive;
   }, [isAssistantActive]);
 
-  const browserSupportsSpeechRecognition = () => {
+  const browserSupportsSpeechRecognition = useCallback(() => {
+    if (!isBrowser) return false;
     return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
-  };
+  }, [isBrowser]);
 
   // ✅ SELEZIONE VOCE ITALIANA FEMMINILE MIGLIORATA
   const selectBestItalianVoice = useCallback(() => {
@@ -677,7 +767,7 @@ export const useVoiceAssistantNative = () => {
 
   // ✅ RILASCIO TURNO SICURO post TTS
   const releaseTurnIfIdle = useCallback(() => {
-    if (!window.speechSynthesis.speaking && !isSpeakingRef.current && utterQueueRef.current.length === 0) {
+    if (!isOutputSpeaking() && !isSpeakingRef.current && utterQueueRef.current.length === 0) {
       turnLockRef.current = false;
       setIsProcessing(false);
       isProcessingRef.current = false;
@@ -685,7 +775,7 @@ export const useVoiceAssistantNative = () => {
         if (restartListeningRef.current) restartListeningRef.current();
       }
     }
-  }, []);
+  }, [isOutputSpeaking]);
 
   // ✅ EXECUTE FUNCTION - Unchanged from previous version
   const executeFunction = useCallback(async (functionName, parameters) => {
@@ -1105,7 +1195,7 @@ export const useVoiceAssistantNative = () => {
           // passa alla prossima function in coda
           drainFunctionQueue();
           // se non sta parlando nessuno ed è tutto fermo, rilascia il turno
-          if (!isSpeaking && !window.speechSynthesis.speaking) {
+          if (!isSpeaking && !isOutputSpeaking()) {
             // safe release
             turnLockRef.current = false;
             setIsProcessing(false);
@@ -1121,7 +1211,7 @@ export const useVoiceAssistantNative = () => {
         }, 200); // ⬅️ più reattivo
     }
   }, [navigate, addToCart, removeFromCart, clearCartAction, removeLastItem, updateQuantity,
-      setSearchQuery, setMultipleFilters, isSpeaking, pickAck]);
+      setSearchQuery, setMultipleFilters, isSpeaking, pickAck, isOutputSpeaking]);
 
   // Now define drainFunctionQueue after executeFunction to avoid TDZ
   const drainFunctionQueue = useCallback(() => {
@@ -1139,7 +1229,7 @@ export const useVoiceAssistantNative = () => {
         } else {
           if (
             isAssistantActiveRef.current &&
-            !window.speechSynthesis.speaking &&
+            !isOutputSpeaking() &&
             !isSpeakingRef.current &&
             !isProcessingRef.current
           ) {
@@ -1150,7 +1240,7 @@ export const useVoiceAssistantNative = () => {
         }
       }
     }, 0);
-  }, [executeFunction]);
+  }, [executeFunction, isOutputSpeaking]);
 
   // Apply UI filters helper
   const applyUIFilters = useCallback((filters) => {
@@ -1186,8 +1276,272 @@ export const useVoiceAssistantNative = () => {
     }, 300);
   }, [filterProducts]);
 
+  const isOutputSpeaking = useCallback(() => {
+    const synthSpeaking =
+      typeof window !== 'undefined' && window.speechSynthesis
+        ? window.speechSynthesis.speaking
+        : false;
+    return synthSpeaking || serverTTSActiveRef.current;
+  }, []);
+
+  const createServerRecognition = useCallback(() => {
+    if (!shouldUseServerSTT) return null;
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      console.warn('Media devices API not available for server STT fallback');
+      return null;
+    }
+
+    const listeners = {
+      start: null,
+      result: null,
+      error: null,
+      end: null,
+      audioend: null,
+    };
+
+    let audioCtx = null;
+    let mediaStream = null;
+    let processor = null;
+    let sourceNode = null;
+    let capturedChunks = [];
+    let finishing = false;
+    let recordedSampleRate = PCM_TARGET_SAMPLE_RATE;
+    let lastSpeechAt = 0;
+    let startedAt = 0;
+
+    const trigger = (key, payload) => {
+      const handler = listeners[key];
+      if (typeof handler === 'function') {
+        try {
+          handler(payload);
+        } catch (err) {
+          console.error(`Server STT listener ${key} failed`, err);
+        }
+      }
+    };
+
+    const cleanup = async () => {
+      if (processor) {
+        try {
+          processor.disconnect();
+        } catch (err) {
+          console.warn('Processor disconnect failed', err);
+        }
+        processor.onaudioprocess = null;
+      }
+      if (sourceNode) {
+        try {
+          sourceNode.disconnect();
+        } catch {}
+      }
+      if (audioCtx) {
+        try {
+          await audioCtx.close();
+        } catch {}
+      }
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => {
+          try {
+            track.stop();
+          } catch {}
+        });
+      }
+      audioCtx = null;
+      mediaStream = null;
+      processor = null;
+      sourceNode = null;
+    };
+
+    const buildResultEvent = (text, confidence = 0) => {
+      const alternative = { transcript: text, confidence };
+      const result = {
+        0: alternative,
+        length: 1,
+        isFinal: true,
+        item: () => alternative,
+      };
+      const results = [result];
+      results.item = (idx) => results[idx];
+      return {
+        resultIndex: 0,
+        results,
+      };
+    };
+
+    const finish = async (reason = 'stop', emitResult = true) => {
+      if (finishing) return;
+      finishing = true;
+      serverSTTStateRef.current.active = false;
+      const recordedChunks = capturedChunks.slice();
+      capturedChunks = [];
+      const finalSampleRate = recordedSampleRate;
+      await cleanup();
+      trigger('audioend');
+
+      if (!emitResult || recordedChunks.length === 0) {
+        if (emitResult && recordedChunks.length === 0) {
+          trigger('error', { error: 'no-speech' });
+        }
+        trigger('end');
+        finishing = false;
+        return;
+      }
+
+      try {
+        const merged = mergeFloat32Chunks(recordedChunks);
+        const resampled = resampleFloat32(merged, finalSampleRate, PCM_TARGET_SAMPLE_RATE);
+        const pcm = float32ToPCM16(resampled);
+        const audioBase64 = arrayBufferToBase64(pcm.buffer);
+        if (!audioBase64) {
+          trigger('error', { error: 'no-speech' });
+        } else {
+          const sttResponse = await voiceAPI.transcribeAudio({
+            audio: audioBase64,
+            sampleRate: PCM_TARGET_SAMPLE_RATE,
+            language: 'it-IT',
+            sessionId: sessionIdRef.current,
+          });
+          const transcriptText = (sttResponse?.text || '').trim();
+          const confidence = typeof sttResponse?.confidence === 'number'
+            ? sttResponse.confidence
+            : 0;
+          if (transcriptText) {
+            trigger('result', buildResultEvent(transcriptText, confidence));
+          } else {
+            trigger('error', { error: 'no-speech' });
+          }
+        }
+      } catch (err) {
+        console.error('Server STT transcription error', err);
+        trigger('error', {
+          error: 'network',
+          message: err?.message || 'Errore nella trascrizione audio',
+        });
+      }
+
+      trigger('end');
+      finishing = false;
+    };
+
+    const recognition = {
+      continuous: false,
+      interimResults: true,
+      lang: 'it-IT',
+      maxAlternatives: 1,
+      start: async () => {
+        if (serverSTTStateRef.current.active) return;
+        try {
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+          });
+        } catch (err) {
+          console.error('Microphone permission denied', err);
+          trigger('error', { error: err?.name || 'not-allowed', message: err?.message });
+          trigger('end');
+          return;
+        }
+
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) {
+          trigger('error', { error: 'audio-context-unavailable' });
+          trigger('end');
+          return;
+        }
+
+        try {
+          audioCtx = new AudioCtx();
+          if (audioCtx.state === 'suspended') {
+            try { await audioCtx.resume(); } catch {}
+          }
+          recordedSampleRate = audioCtx.sampleRate || PCM_TARGET_SAMPLE_RATE;
+          sourceNode = audioCtx.createMediaStreamSource(mediaStream);
+          processor = audioCtx.createScriptProcessor(4096, 1, 1);
+          capturedChunks = [];
+          lastSpeechAt = Date.now();
+          startedAt = lastSpeechAt;
+
+          processor.onaudioprocess = (event) => {
+            if (!serverSTTStateRef.current.active) return;
+            const channel = event.inputBuffer.getChannelData(0);
+            capturedChunks.push(new Float32Array(channel));
+
+            let sum = 0;
+            for (let i = 0; i < channel.length; i += 1) {
+              const value = channel[i];
+              sum += value * value;
+            }
+            const rms = Math.sqrt(sum / channel.length);
+            const now = Date.now();
+            if (rms > 0.015) {
+              lastSpeechAt = now;
+            } else if (now - lastSpeechAt > 900 && capturedChunks.length > 4) {
+              finish('silence');
+            }
+
+            if (now - startedAt > 14000) {
+              finish('timeout');
+            }
+          };
+
+          sourceNode.connect(processor);
+          processor.connect(audioCtx.destination);
+          serverSTTStateRef.current.active = true;
+          trigger('start');
+        } catch (err) {
+          console.error('Failed to init server STT pipeline', err);
+          trigger('error', { error: err?.name || 'unknown', message: err?.message });
+          await cleanup();
+          trigger('end');
+        }
+      },
+      stop: () => finish('stop'),
+      abort: () => finish('abort', false),
+    };
+
+    Object.defineProperties(recognition, {
+      onstart: {
+        get: () => listeners.start,
+        set: (fn) => {
+          listeners.start = fn;
+        },
+      },
+      onresult: {
+        get: () => listeners.result,
+        set: (fn) => {
+          listeners.result = fn;
+        },
+      },
+      onerror: {
+        get: () => listeners.error,
+        set: (fn) => {
+          listeners.error = fn;
+        },
+      },
+      onend: {
+        get: () => listeners.end,
+        set: (fn) => {
+          listeners.end = fn;
+        },
+      },
+      onaudioend: {
+        get: () => listeners.audioend,
+        set: (fn) => {
+          listeners.audioend = fn;
+        },
+      },
+    });
+
+    return recognition;
+  }, [shouldUseServerSTT, voiceAPI, sessionIdRef, serverSTTStateRef]);
+
   // ✅ SPEECH RECOGNITION CORRETTO - NON CONTINUOUS
   const initializeSpeechRecognition = useCallback(() => {
+    if (shouldUseServerSTT) {
+      return createServerRecognition();
+    }
     if (!browserSupportsSpeechRecognition()) {
       return null;
     }
@@ -1320,7 +1674,7 @@ export const useVoiceAssistantNative = () => {
         !isExecutingFunctionRef.current &&
         !isRestartingRef.current &&
         !isProcessingRef.current &&
-        !window.speechSynthesis.speaking &&
+        !isOutputSpeaking() &&
         !turnLockRef.current &&
         !closingTimerRef.current &&
         functionQueueRef.current.length === 0
@@ -1344,7 +1698,17 @@ export const useVoiceAssistantNative = () => {
     };
 
     return recognition;
-  }, [resumeAudioPipeline, isIOSDevice, pickNoInputPrompt, getListeningWindowDuration, getClosingGraceMs, cancelFinalResultTimer]);
+  }, [
+    resumeAudioPipeline,
+    isIOSDevice,
+    pickNoInputPrompt,
+    getListeningWindowDuration,
+    getClosingGraceMs,
+    cancelFinalResultTimer,
+    browserSupportsSpeechRecognition,
+    createServerRecognition,
+    shouldUseServerSTT
+  ]);
 
   // ✅ RESTART LISTENING CORRETTO - PREVIENE LOOP
   const restartListening = useCallback(() => {
@@ -1355,7 +1719,7 @@ export const useVoiceAssistantNative = () => {
       isExecutingFunctionRef.current ||
       isProcessingRef.current ||                  // ⬅️ non riaprire durante processing
       functionQueueRef.current.length > 0 ||      // ⬅️ se ci sono function in coda
-      window.speechSynthesis.speaking             // ⬅️ non durante TTS
+      isOutputSpeaking()             // ⬅️ non durante TTS
     ) {
       return;
     }
@@ -1399,7 +1763,7 @@ export const useVoiceAssistantNative = () => {
       }
       isRestartingRef.current = false;
     }, 220); // piccolo delay per non catturare il beep
-  }, [isSpeaking, isExecutingFunction, initializeSpeechRecognition, playReadyBeep, requiresUserGestureRecognition]);
+  }, [isSpeaking, isExecutingFunction, initializeSpeechRecognition, playReadyBeep, requiresUserGestureRecognition, isOutputSpeaking]);
 
   // Programmatic restart dopo navigazioni/cambi DOM
   const scheduleListenAfterNav = useCallback((delay = 700) => {
@@ -1407,7 +1771,7 @@ export const useVoiceAssistantNative = () => {
       if (
         isAssistantActiveRef.current &&
         !isRestartingRef.current &&
-        !window.speechSynthesis.speaking &&
+        !isOutputSpeaking() &&
         !isSpeakingRef.current &&
         !isProcessingRef.current &&
         functionQueueRef.current.length === 0
@@ -1417,7 +1781,7 @@ export const useVoiceAssistantNative = () => {
         }
       }
     }, delay);
-  }, []);
+  }, [isOutputSpeaking]);
 
   // Aggiorna la ref del restart dopo ogni render utile
   useEffect(() => {
@@ -1437,9 +1801,10 @@ export const useVoiceAssistantNative = () => {
     }
     
     // Cancel speech
-    if ('speechSynthesis' in window) {
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
       try { window.speechSynthesis.cancel(); } catch {}
     }
+    stopServerAudioPlayback();
     // ✅ svuota coda TTS e timer safety
     utterQueueRef.current = [];
     if (ttsSafetyTimerRef.current) { clearTimeout(ttsSafetyTimerRef.current); ttsSafetyTimerRef.current = null; }
@@ -1476,7 +1841,7 @@ export const useVoiceAssistantNative = () => {
     setListeningProfile('default');
 
     console.log('✅ Assistant stopped');
-  }, [cancelFinalResultTimer, setListeningProfile]);
+  }, [cancelFinalResultTimer, setListeningProfile, stopServerAudioPlayback]);
 
   // ✅ INACTIVITY TIMEOUT
   const resetInactivityTimeout = useCallback(() => {
@@ -1612,14 +1977,150 @@ export const useVoiceAssistantNative = () => {
     return out;
   };
 
+  const ensureServerTTSAudioContext = useCallback(async () => {
+    if (!isBrowser) return null;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    if (!serverTTSAudioCtxRef.current) {
+      serverTTSAudioCtxRef.current = new AudioCtx();
+    }
+    const ctx = serverTTSAudioCtxRef.current;
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch (err) {
+        console.warn('Unable to resume TTS audio context', err);
+      }
+    }
+    return ctx;
+  }, [isBrowser]);
+
+  const stopServerAudioPlayback = useCallback(() => {
+    if (serverTTSSourceRef.current) {
+      try {
+        serverTTSSourceRef.current.onended = null;
+        serverTTSSourceRef.current.stop();
+        serverTTSSourceRef.current.disconnect?.();
+      } catch (err) {
+        console.warn('Failed to stop server TTS source', err);
+      }
+      serverTTSSourceRef.current = null;
+    }
+    serverTTSActiveRef.current = false;
+    serverTTSQueueRef.current = [];
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    stopBargeInMonitor();
+  }, [stopBargeInMonitor]);
+
+  const processServerTTSQueue = useCallback(async () => {
+    if (serverTTSActiveRef.current) return;
+    if (serverTTSQueueRef.current.length === 0) return;
+
+    serverTTSActiveRef.current = true;
+    resumeAudioPipeline();
+    safeStopRecognition();
+    setIsSpeaking(true);
+    isSpeakingRef.current = true;
+    setIsUserTurn(false);
+    hasSpokenThisTurnRef.current = true;
+    startBargeInMonitor();
+
+    while (serverTTSQueueRef.current.length > 0) {
+      const current = serverTTSQueueRef.current[0];
+      try {
+        const response = await voiceAPI.synthesizeSpeech({
+          text: current.text,
+          voice: current.voice,
+          sessionId: sessionIdRef.current,
+        });
+        const audioBase64 = response?.audio;
+        if (!audioBase64) {
+          throw new Error('tts-empty-response');
+        }
+        const audioBuffer = base64ToArrayBuffer(audioBase64);
+        const ctx = await ensureServerTTSAudioContext();
+        if (!ctx) {
+          throw new Error('audio-context-unavailable');
+        }
+        const decoded = await new Promise((resolve, reject) => {
+          const slice = audioBuffer.slice(0);
+          ctx.decodeAudioData(slice, resolve, reject);
+        });
+        await new Promise((resolve) => {
+          const source = ctx.createBufferSource();
+          source.buffer = decoded;
+          source.connect(ctx.destination);
+          serverTTSSourceRef.current = source;
+          source.onended = () => {
+            serverTTSSourceRef.current = null;
+            resolve();
+          };
+          source.start(0);
+        });
+        if (typeof current.onEnd === 'function') {
+          current.onEnd();
+        }
+      } catch (err) {
+        console.error('Server TTS playback error', err);
+        if (typeof current.onEnd === 'function') {
+          current.onEnd(err);
+        }
+      }
+      serverTTSQueueRef.current.shift();
+    }
+
+    stopBargeInMonitor();
+    setIsSpeaking(false);
+    isSpeakingRef.current = false;
+    serverTTSActiveRef.current = false;
+    if (streamReleasePendingRef.current) {
+      streamReleasePendingRef.current = false;
+    }
+    releaseTurnIfIdle();
+  }, [
+    ensureServerTTSAudioContext,
+    releaseTurnIfIdle,
+    resumeAudioPipeline,
+    safeStopRecognition,
+    startBargeInMonitor,
+    stopBargeInMonitor,
+    voiceAPI,
+  ]);
+
+  const enqueueServerSpeech = useCallback(
+    (text, onEnd, immediate = false, options = {}) => {
+      const payload = {
+        text,
+        onEnd,
+        voice: options?.voice || null,
+      };
+      if (immediate) {
+        stopServerAudioPlayback();
+      }
+      serverTTSQueueRef.current.push(payload);
+      processServerTTSQueue();
+    },
+    [processServerTTSQueue, stopServerAudioPlayback]
+  );
+
   const speak = useCallback((text, onEnd, immediate = false, options = {}) => {
     const { enqueue = false, listeningProfile: forcedProfile } = options || {};
-    if (!('speechSynthesis' in window)) return;
+    const sanitized = sanitizeTextForTTS(text);
+    applyListeningProfileForAssistantText(sanitized, forcedProfile);
+
+    if (shouldUseServerTTS) {
+      enqueueServerSpeech(sanitized, onEnd, immediate, { voice: forcedProfile });
+      return;
+    }
+
+    if (typeof window === 'undefined' || !window.speechSynthesis) {
+      enqueueServerSpeech(sanitized, onEnd, immediate, { voice: forcedProfile });
+      return;
+    }
+
     try {
-      const sanitized = sanitizeTextForTTS(text);
-      applyListeningProfileForAssistantText(sanitized, forcedProfile);
       resumeAudioPipeline();
-      // assicurati che il mic sia off durante TTS
       safeStopRecognition();
       setIsSpeaking(true);
       isSpeakingRef.current = true;
@@ -1644,18 +2145,14 @@ export const useVoiceAssistantNative = () => {
           setIsUserTurn(false);
           hasSpokenThisTurnRef.current = true;
           if (ttsSafetyTimerRef.current) { clearTimeout(ttsSafetyTimerRef.current); ttsSafetyTimerRef.current = null; }
-          // avvia barge-in
           startBargeInMonitor();
         };
         utt.onend = () => {
-          // rimuovi l'elemento servito dalla coda
           utterQueueRef.current.shift();
-          // se c'è un prossimo, catenalo subito
           if (utterQueueRef.current.length > 0) {
             const nextUtt = utterQueueRef.current[0];
             try { if (nextUtt) window.speechSynthesis.speak(nextUtt); } catch {}
           }
-          // se la coda è vuota, chiudi stato speaking PRIMA del callback
           if (utterQueueRef.current.length === 0) {
             stopBargeInMonitor();
             setIsSpeaking(false);
@@ -1670,13 +2167,11 @@ export const useVoiceAssistantNative = () => {
         utterQueueRef.current.push(utt);
       });
 
-      // avvia se non sta già parlando
       if (!window.speechSynthesis.speaking) {
         const next = utterQueueRef.current[0];
         if (next) window.speechSynthesis.speak(next);
       }
 
-      // safety release se engine resta muto
       if (!ttsSafetyTimerRef.current) {
         ttsSafetyTimerRef.current = setTimeout(() => {
           if (!window.speechSynthesis.speaking && utterQueueRef.current.length === 0) {
@@ -1686,8 +2181,19 @@ export const useVoiceAssistantNative = () => {
           }
         }, 1500);
       }
-    } catch {}
-  }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle, resumeAudioPipeline, applyListeningProfileForAssistantText]);
+    } catch (err) {
+      console.error('Browser TTS failed, switching to server fallback', err);
+      enqueueServerSpeech(sanitized, onEnd, true, { voice: forcedProfile });
+    }
+  }, [
+    applyListeningProfileForAssistantText,
+    enqueueServerSpeech,
+    releaseTurnIfIdle,
+    resumeAudioPipeline,
+    safeStopRecognition,
+    segmentTextIntoSentences,
+    shouldUseServerTTS,
+  ]);
 
   const flushStreamedSpeech = useCallback((force = false) => {
     const raw = (streamSentenceBufferRef.current || '').replace(/\s+/g, ' ').trim();
@@ -1787,7 +2293,7 @@ export const useVoiceAssistantNative = () => {
         streamReleasePendingRef.current = true;
         streamBufferRef.current = '';
         streamSentenceBufferRef.current = '';
-        if (!window.speechSynthesis.speaking && utterQueueRef.current.length === 0) {
+        if (!isOutputSpeaking() && utterQueueRef.current.length === 0) {
           setIsProcessing(false);
           isProcessingRef.current = false;
           releaseTurnIfIdle();
@@ -1895,7 +2401,7 @@ export const useVoiceAssistantNative = () => {
             }
           }
         } else {
-          if (!isStreamingTTSRef.current && utterQueueRef.current.length === 0 && !window.speechSynthesis.speaking) {
+          if (!isStreamingTTSRef.current && utterQueueRef.current.length === 0 && !isOutputSpeaking()) {
             setIsProcessing(false);
             isProcessingRef.current = false;
             releaseTurnIfIdle();
@@ -1916,7 +2422,10 @@ export const useVoiceAssistantNative = () => {
       }
 
       case 'error': {
-        try { window.speechSynthesis.cancel(); } catch {}
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          try { window.speechSynthesis.cancel(); } catch {}
+        }
+        stopServerAudioPlayback();
         utterQueueRef.current = [];
         setIsSpeaking(false);
         isSpeakingRef.current = false;
@@ -1930,7 +2439,16 @@ export const useVoiceAssistantNative = () => {
         break;
       }
     }
-  }, [speak, executeFunction, stopAssistant, pushAssistantHistory, flushStreamedSpeech, releaseTurnIfIdle]);
+  }, [
+    speak,
+    executeFunction,
+    stopAssistant,
+    pushAssistantHistory,
+    flushStreamedSpeech,
+    releaseTurnIfIdle,
+    isOutputSpeaking,
+    stopServerAudioPlayback
+  ]);
 
   // Aggiorna la ref del listener dopo ogni render utile
   useEffect(() => {
@@ -1977,8 +2495,11 @@ export const useVoiceAssistantNative = () => {
 
     try {
       // 🎙️ Barge-in hard: se l'assistente sta parlando, ferma e libera i lock
-      if (isSpeakingRef.current || window.speechSynthesis.speaking) {
-        try { window.speechSynthesis.cancel(); } catch {}
+      if (isSpeakingRef.current || isOutputSpeaking()) {
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          try { window.speechSynthesis.cancel(); } catch {}
+        }
+        stopServerAudioPlayback();
         if (typeof stopBargeInMonitor === 'function') stopBargeInMonitor();
         utterQueueRef.current = [];
         streamBufferRef.current = '';
@@ -2285,7 +2806,18 @@ export const useVoiceAssistantNative = () => {
       turnLockRef.current = false;
       releaseTurnIfIdle();
     }
-  }, [sendMessage, sessionCount, speak, stopAssistant, pushUserHistory, releaseTurnIfIdle, ensureCurrentProductContext, setListeningProfile]);
+  }, [
+    sendMessage,
+    sessionCount,
+    speak,
+    stopAssistant,
+    pushUserHistory,
+    releaseTurnIfIdle,
+    ensureCurrentProductContext,
+    setListeningProfile,
+    isOutputSpeaking,
+    stopServerAudioPlayback
+  ]);
 
   useEffect(() => {
     handleVoiceCommandRef.current = handleVoiceCommand;
@@ -2341,7 +2873,7 @@ export const useVoiceAssistantNative = () => {
               isAssistantActiveRef.current &&
               !isProcessingRef.current &&
               !isExecutingFunctionRef.current &&
-              !window.speechSynthesis.speaking
+              !isOutputSpeaking()
             ) {
               if (restartListeningRef.current) restartListeningRef.current();
             }
@@ -2356,8 +2888,19 @@ export const useVoiceAssistantNative = () => {
         isAssistantActiveRef.current = false;
       }
     }
-  }, [isListening, isAssistantActive, initializeSpeechRecognition, speak, getWelcomeMessage,
-      stopAssistant, resetInactivityTimeout, resumeAudioPipeline, setListeningProfile, cancelFinalResultTimer]);
+  }, [
+    isListening,
+    isAssistantActive,
+    initializeSpeechRecognition,
+    speak,
+    getWelcomeMessage,
+    stopAssistant,
+    resetInactivityTimeout,
+    resumeAudioPipeline,
+    setListeningProfile,
+    cancelFinalResultTimer,
+    isOutputSpeaking
+  ]);
 
   // Cleanup
   useEffect(() => {
@@ -2365,9 +2908,10 @@ export const useVoiceAssistantNative = () => {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      if ('speechSynthesis' in window) {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
         window.speechSynthesis.cancel();
       }
+      stopServerAudioPlayback();
       if (wsRef.current) {
         wsRef.current.close();
       }

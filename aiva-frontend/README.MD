@@ -78,6 +78,7 @@ The app will open at `http://localhost:5173`
 
 ### Voice Features
 - **Web Speech API (ASR/TTS)** - Riconoscimento e sintesi nativi
+- **Server fallback STT/TTS** - Invio PCM16 al backend (`/api/speech-to-text`) con riproduzione audio da `/api/tts` su iOS/Safari
 - **TTS Queue + Barge‑in** - Coda di frasi con chaining e interruzione RMS
 - **WebSocket** - Messaggi strutturati (response/complete, function_*, stream_start/text_chunk/stream_complete) per streaming a frasi complete.
 
@@ -154,6 +155,14 @@ const assistant = useVoiceAssistantNative();
 VITE_BACKEND_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
 ```
+
+### Mobile Speech Fallback
+
+Su iOS/Safari il browser non espone `webkitSpeechRecognition`: il frontend usa automaticamente il percorso server-side inviando chunk PCM16 al backend e riproducendo l'audio restituito da `/api/tts`. Per un'esperienza completa:
+
+1. Configura il backend con `VOSK_MODEL_PATH` (modello italiano) e le variabili opzionali `PYTTSX3_*`.
+2. Assicurati che il microfono sia autorizzato: il hook crea una `AudioContext` e ricampionamento a 16 kHz prima dell'upload.
+3. Verifica che `VITE_BACKEND_URL` sia raggiungibile via HTTPS su mobile (richiesto da getUserMedia).
 
 ### Tailwind Customization
 The design system includes:
