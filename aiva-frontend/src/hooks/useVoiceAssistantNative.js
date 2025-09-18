@@ -205,6 +205,13 @@ export const useVoiceAssistantNative = () => {
   const requiresUserGestureRecognition = isIOSDevice && isSafari;
   const speechPrimedRef = useRef(false);
   const serverSTTStateRef = useRef({ active: false, aborting: false });
+  const browserSupportsSpeechRecognition = useCallback(() => {
+    if (!isBrowser) return false;
+    if (typeof window === 'undefined') return false;
+    return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+  }, [isBrowser]);
+
+
   const shouldUseServerSTT = useMemo(() => {
     if (!isBrowser) return false;
     if (!browserSupportsSpeechRecognition()) return true;
@@ -658,11 +665,6 @@ export const useVoiceAssistantNative = () => {
   useEffect(() => {
     isAssistantActiveRef.current = isAssistantActive;
   }, [isAssistantActive]);
-
-  const browserSupportsSpeechRecognition = useCallback(() => {
-    if (!isBrowser) return false;
-    return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
-  }, [isBrowser]);
 
   // ✅ SELEZIONE VOCE ITALIANA FEMMINILE MIGLIORATA
   const selectBestItalianVoice = useCallback(() => {
