@@ -91,6 +91,10 @@ Once the server is running, you can access:
 | `ALLOWED_ORIGIN_REGEX` | Override/disable the default `https://*.vercel.app` allowance (`false` to disable) | `https://.*\\.vercel\\.app` |
 | `MAX_REQUESTS_PER_MINUTE` | General rate limit | `60` |
 | `MAX_AI_REQUESTS_PER_MINUTE` | AI endpoint rate limit | `10` |
+| `VOSK_MODEL_PATH` | Filesystem path to the Italian Vosk model (`vosk-model-small-it-0.22`) used for offline STT fallback | None (disable)
+| `PYTTSX3_VOICE` | Optional voice id/name passed to `pyttsx3` for offline TTS | autodetect Italian voice |
+| `PYTTSX3_RATE` | Playback rate for offline TTS | `170` |
+| `PYTTSX3_VOLUME` | Playback volume for offline TTS | `1.0` |
 | `PORT` | Server port | `8000` |
 | `HOST` | Server host | `0.0.0.0` |
 
@@ -103,6 +107,16 @@ The backend can run without an OpenAI API key using fallback mode:
 - Pre-defined response patterns in Italian
 
 To use full AI capabilities with streaming, add your OpenAI API key to the `.env` file.
+
+### Offline Speech Stack (Mobile iOS fallback)
+
+To support Safari/Chrome mobile where the Web Speech API is unavailable, configure the server-side speech stack:
+
+1. **Install Vosk Italian model** – download [`vosk-model-small-it-0.22`](https://alphacephei.com/vosk/models) and unpack it.
+2. **Expose the path** – set `VOSK_MODEL_PATH=/var/task/models/vosk-model-small-it-0.22` (or the deployed path) so the backend can load it lazily.
+3. **Optional TTS tuning** – adjust `PYTTSX3_VOICE`, `PYTTSX3_RATE`, `PYTTSX3_VOLUME` to select a system voice for `pyttsx3`. When the engine is not available the service automatically falls back to `gTTS`.
+
+The new `/api/speech-to-text` and `/api/tts` endpoints are designed for PCM16 audio chunks (`base64`) and return JSON payloads usable by the frontend fallback pipeline.
 
 ## 🛡️ Security Features
 
@@ -152,6 +166,9 @@ aiva-backend/
 
 ### Voice/AI Endpoints
 - `POST /api/voice/process` - Elaborazione comandi vocali (Italiano)
+- `POST /api/voice/command` - Endpoint Vercel-friendly che restituisce l'intero turno in un'unica risposta
+- `POST /api/speech-to-text` - Trascrizione server-side di audio PCM16 (`base64`) tramite modello Vosk
+- `POST /api/tts` - Sintesi vocale offline (pyttsx3/gTTS) con risposta `audio_base64`
 
 ### Product Endpoints
 - `GET /api/products` - List products with advanced filtering
