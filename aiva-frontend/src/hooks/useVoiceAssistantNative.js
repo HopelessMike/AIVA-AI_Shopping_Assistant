@@ -186,6 +186,7 @@ export const useVoiceAssistantNative = () => {
   const serverTTSAudioCtxRef = useRef(null);
   const serverTTSSourceRef = useRef(null);
   const serverTTSActiveRef = useRef(false);
+  const speakRef = useRef(null);
   // ⛔ Scarta messaggi WS residui del turno precedente (attivo dopo barge-in)
   const dropStaleResponsesRef = useRef(false);
   const hasSpokenThisTurnRef = useRef(false);
@@ -369,7 +370,7 @@ export const useVoiceAssistantNative = () => {
     const choice = randomFrom(pool.length > 0 ? pool : options) || fallback || options[0];
     ackHistoryRef.current[key] = choice;
     return choice || fallback;
-  }, [stopServerAudioPlayback]);
+  }, []);
 
   const clearListeningTimers = useCallback(() => {
     if (listeningTimerRef.current) { clearTimeout(listeningTimerRef.current); listeningTimerRef.current = null; }
@@ -2065,7 +2066,30 @@ export const useVoiceAssistantNative = () => {
         }
       } catch (err) {
         console.error('Server TTS playback error', err);
-        if (typeof current.onEnd === 'function') {
+        const fallbackSpeak = speakRef.current;
+        const canFallback =
+          typeof window !== 'undefined' &&
+          window.speechSynthesis &&
+          typeof fallbackSpeak === 'function';
+        if (canFallback) {
+          try {
+            fallbackSpeak(
+              current.text,
+              current.onEnd,
+              current.immediate,
+              {
+                enqueue: current.enqueue,
+                listeningProfile: current.listeningProfile,
+                forceBrowser: true,
+              }
+            );
+          } catch (fallbackErr) {
+            console.error('Browser TTS fallback failed', fallbackErr);
+            if (typeof current.onEnd === 'function') {
+              current.onEnd(err);
+            }
+          }
+        } else if (typeof current.onEnd === 'function') {
           current.onEnd(err);
         }
       }
@@ -2096,6 +2120,9 @@ export const useVoiceAssistantNative = () => {
         text,
         onEnd,
         voice: options?.voice || null,
+        enqueue: options?.enqueue ?? false,
+        listeningProfile: options?.listeningProfile || null,
+        immediate,
       };
       if (immediate) {
         stopServerAudioPlayback();
@@ -2107,17 +2134,29 @@ export const useVoiceAssistantNative = () => {
   );
 
   const speak = useCallback((text, onEnd, immediate = false, options = {}) => {
-    const { enqueue = false, listeningProfile: forcedProfile } = options || {};
+    const {
+      enqueue = false,
+      listeningProfile: forcedProfile,
+      forceBrowser = false,
+    } = options || {};
     const sanitized = sanitizeTextForTTS(text);
     applyListeningProfileForAssistantText(sanitized, forcedProfile);
 
-    if (shouldUseServerTTS) {
-      enqueueServerSpeech(sanitized, onEnd, immediate, { voice: forcedProfile });
+    if (shouldUseServerTTS && !forceBrowser) {
+      enqueueServerSpeech(sanitized, onEnd, immediate, {
+        voice: forcedProfile,
+        enqueue,
+        listeningProfile: forcedProfile,
+      });
       return;
     }
 
-    if (typeof window === 'undefined' || !window.speechSynthesis) {
-      enqueueServerSpeech(sanitized, onEnd, immediate, { voice: forcedProfile });
+    if ((typeof window === 'undefined' || !window.speechSynthesis) && !forceBrowser) {
+      enqueueServerSpeech(sanitized, onEnd, immediate, {
+        voice: forcedProfile,
+        enqueue,
+        listeningProfile: forcedProfile,
+      });
       return;
     }
 
@@ -2185,7 +2224,15 @@ export const useVoiceAssistantNative = () => {
       }
     } catch (err) {
       console.error('Browser TTS failed, switching to server fallback', err);
-      enqueueServerSpeech(sanitized, onEnd, true, { voice: forcedProfile });
+      if (!forceBrowser) {
+        enqueueServerSpeech(sanitized, onEnd, true, {
+          voice: forcedProfile,
+          enqueue,
+          listeningProfile: forcedProfile,
+        });
+      } else if (typeof onEnd === 'function') {
+        onEnd(err);
+      }
     }
   }, [
     applyListeningProfileForAssistantText,
@@ -2196,6 +2243,10 @@ export const useVoiceAssistantNative = () => {
     segmentTextIntoSentences,
     shouldUseServerTTS,
   ]);
+
+  useEffect(() => {
+    speakRef.current = speak;
+  }, [speak]);
 
   const flushStreamedSpeech = useCallback((force = false) => {
     const raw = (streamSentenceBufferRef.current || '').replace(/\s+/g, ' ').trim();
