@@ -50,18 +50,31 @@ const ProductPage = () => {
             .replace(/\s{2,}/g, ' ')
             .trim();
 
+        const sanitizedDescription = stripMd(
+          productData.description_long || productData.description || ''
+        );
+
         window.currentProductContext = {
           id: productData.id,
           name: productData.name,
-          description_text: stripMd(productData.description || productData.description_long || ''),
+          description_text: sanitizedDescription,
           category: productData.category,
           gender: productData.gender,
+          price: productData.price,
+          brand: productData.brand,
+          image: productData.image,
           variants: (productData.variants || []).map((v) => ({
-            size: v.size,
+            size: typeof v.size === 'string' ? v.size : v.size?.value,
             color: v.color,
             available: v.available,
             stock: v.stock,
           })),
+          product: {
+            ...productData,
+            description: productData.description,
+            description_long: productData.description_long,
+          },
+          lastUpdated: Date.now(),
         };
         // Set default selections
         if (productData.variants && productData.variants.length > 0) {

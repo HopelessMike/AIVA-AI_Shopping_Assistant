@@ -14,6 +14,60 @@ const randomFrom = (list = []) => {
   return list[index] ?? list[0];
 };
 
+const stripMarkdown = (s = '') =>
+  (s || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/[\*_~>#-]+/g, ' ')
+    .replace(/\[(.*?)\]\((.*?)\)/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+const normalizeVariantForContext = (variant = {}) => ({
+  size: typeof variant.size === 'string' ? variant.size : variant.size?.value,
+  color: variant.color,
+  available: variant.available,
+  stock: variant.stock,
+});
+
+const clampQuantity = (value, fallback = 1) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(10, Math.max(1, Math.round(parsed)));
+};
+
+const mergeProductContext = (existing = {}, productData = null) => {
+  if (!productData || typeof productData !== 'object') {
+    return existing;
+  }
+
+  const sanitizedDescription = stripMarkdown(
+    productData.description_long ||
+      productData.description ||
+      existing.description_text ||
+      ''
+  );
+
+  const normalizedVariants = Array.isArray(productData.variants)
+    ? productData.variants.map(normalizeVariantForContext)
+    : existing.variants || [];
+
+  return {
+    ...existing,
+    id: productData.id || existing.id,
+    name: productData.name || existing.name,
+    category: productData.category || existing.category,
+    gender: productData.gender || existing.gender,
+    price: productData.price ?? existing.price,
+    brand: productData.brand ?? existing.brand,
+    image: productData.image ?? existing.image,
+    description_text: sanitizedDescription,
+    variants: normalizedVariants,
+    product: productData,
+    lastUpdated: Date.now(),
+  };
+};
+
 export const useVoiceAssistantNative = () => {
   const [isListening, setIsListening] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -81,27 +135,80 @@ export const useVoiceAssistantNative = () => {
   const bargeInAnalyserRef = useRef(null);
   const bargeInRafRef = useRef(null);
   // Durate finestra di ascolto e chiusura
-  const LISTENING_WINDOW_MS = 9000;
-  const CLOSING_GRACE_MS = 1000;
-  const NO_INPUT_MESSAGES = [
-    "Se hai bisogno di altro, sono qui.",
-    "Ok! Buon proseguimento, chiamami se ti serve aiuto.",
-    "Resto a disposizione se ti serve altro.",
-    "Quando vuoi riprendere, basta dirmelo.",
-    "Sono qui se ti viene in mente qualcos'altro da vedere.",
-    "Va bene, resto in ascolto per quando ti serve.",
-    "Va benissimo, resto disponibile se vuoi continuare più tardi.",
-    "Prenditi pure il tuo tempo, io rimango qui.",
-    "Chiamami pure quando ti viene voglia di esplorare altri look.",
-    "Se vuoi riprendere, basta dirmelo e continuiamo da dove eravamo."
-
-  ];
+  const LISTENING_PROFILES = {
+    default: {
+      window: 9000,
+      closingGrace: 1000,
+      prompts: [
+        "Se hai bisogno di altro, sono qui.",
+        "Ok! Buon proseguimento, chiamami se ti serve aiuto.",
+        "Resto a disposizione se ti serve altro.",
+        "Quando vuoi riprendere, basta dirmelo.",
+        "Sono qui se ti viene in mente qualcos'altro da vedere.",
+        "Va bene, resto in ascolto per quando ti serve.",
+        "Va benissimo, resto disponibile se vuoi continuare più tardi.",
+        "Prenditi pure il tuo tempo, io rimango qui.",
+        "Chiamami pure quando ti viene voglia di esplorare altri look.",
+        "Se vuoi riprendere, basta dirmelo e continuiamo da dove eravamo."
+      ]
+    },
+    followUp: {
+      window: 13000,
+      closingGrace: 1600,
+      prompts: [
+        "Nessun problema, fammi sapere come vuoi procedere.",
+        "Va bene, ti ascolto quando sei pronto.",
+        "Prenditi pure un momento per pensarci, resto in ascolto.",
+        "Ok, dimmi pure appena hai deciso come continuare.",
+        "Tranquillo, fammi sapere quando vuoi proseguire."
+      ]
+    },
+    task: {
+      window: 11000,
+      closingGrace: 1300,
+      prompts: [
+        "Va bene, continuo a seguire la tua richiesta.",
+        "Perfetto, dimmi pure gli altri dettagli quando vuoi.",
+        "Ok, resto qui finché non mi dai nuove indicazioni.",
+        "Ricevuto, se vuoi aggiungere altro basta dirmelo.",
+        "Va benissimo, proseguiamo quando sei pronto."
+      ]
+    }
+  };
+  const FINAL_RESULT_GRACE_MS = 450;
   const listeningTimerRef = useRef(null);
   const activeListenSessionIdRef = useRef(null);
   const beepedThisSessionRef = useRef(false);
   const closingTimerRef = useRef(null);
   const turnLockRef = useRef(false);
   const ackHistoryRef = useRef({});
+
+  const ensureCurrentProductContext = useCallback(async () => {
+    const existing = window.currentProductContext || {};
+
+    if (existing.product && typeof existing.product === 'object') {
+      const updated = mergeProductContext(existing, existing.product);
+      window.currentProductContext = updated;
+      return updated;
+    }
+
+    if (!existing.id) {
+      return existing;
+    }
+
+    try {
+      const productData = await productAPI.getProduct(existing.id);
+      if (productData) {
+        const updated = mergeProductContext(existing, productData);
+        window.currentProductContext = updated;
+        return updated;
+      }
+    } catch (error) {
+      console.warn('Unable to hydrate current product context', error);
+    }
+
+    return window.currentProductContext || existing;
+  }, [productAPI]);
 
   const NAV_ACK_DEFAULT = [
     "Ecco.",
@@ -172,6 +279,80 @@ export const useVoiceAssistantNative = () => {
     if (listeningTimerRef.current) { clearTimeout(listeningTimerRef.current); listeningTimerRef.current = null; }
     if (closingTimerRef.current) { clearTimeout(closingTimerRef.current); closingTimerRef.current = null; }
   }, []);
+
+  const listeningProfileRef = useRef('default');
+  const lastNoInputPromptRef = useRef('');
+  const finalResultBufferRef = useRef('');
+  const finalResultTimerRef = useRef(null);
+  const handleVoiceCommandRef = useRef(() => {});
+
+  const setListeningProfile = useCallback((profile) => {
+    const key = LISTENING_PROFILES[profile] ? profile : 'default';
+    listeningProfileRef.current = key;
+  }, []);
+
+  const getListeningProfileConfig = useCallback(() => {
+    const profileKey = listeningProfileRef.current;
+    return LISTENING_PROFILES[profileKey] || LISTENING_PROFILES.default;
+  }, []);
+
+  const getListeningWindowDuration = useCallback(() => {
+    const config = getListeningProfileConfig();
+    return typeof config.window === 'number' ? config.window : LISTENING_PROFILES.default.window;
+  }, [getListeningProfileConfig]);
+
+  const getClosingGraceMs = useCallback(() => {
+    const config = getListeningProfileConfig();
+    return typeof config.closingGrace === 'number' ? config.closingGrace : LISTENING_PROFILES.default.closingGrace;
+  }, [getListeningProfileConfig]);
+
+  const pickNoInputPrompt = useCallback(() => {
+    const config = getListeningProfileConfig();
+    const options = Array.isArray(config.prompts) ? config.prompts.filter(Boolean) : [];
+    const fallbackOptions = LISTENING_PROFILES.default.prompts.filter(Boolean);
+    const pool = options.length ? options : fallbackOptions;
+    if (!pool.length) return '';
+    const last = lastNoInputPromptRef.current;
+    const filtered = pool.filter((msg) => msg !== last);
+    const choice = randomFrom(filtered.length ? filtered : pool) || pool[0];
+    lastNoInputPromptRef.current = choice;
+    return choice;
+  }, [getListeningProfileConfig]);
+
+  const cancelFinalResultTimer = useCallback(() => {
+    if (finalResultTimerRef.current) {
+      clearTimeout(finalResultTimerRef.current);
+      finalResultTimerRef.current = null;
+    }
+  }, []);
+
+  const applyListeningProfileForAssistantText = useCallback((text, explicitProfile) => {
+    if (explicitProfile && LISTENING_PROFILES[explicitProfile]) {
+      setListeningProfile(explicitProfile);
+      return;
+    }
+
+    const normalized = (text || '').toString().trim().toLowerCase();
+    if (!normalized) {
+      return;
+    }
+
+    const isQuestion = /[?]\s*$/.test(normalized) || /(preferisci|vuoi|ti serve|posso|che ne pensi|hai bisogno)/.test(normalized);
+    if (isQuestion) {
+      setListeningProfile('followUp');
+      return;
+    }
+
+    const midTaskCue = /(aggiunto|fatto|eccoti|ecco|ho trovato|dimmi se vuoi|quando sei pronto|se vuoi aggiungere)/.test(normalized);
+    if (midTaskCue) {
+      setListeningProfile('task');
+      return;
+    }
+
+    if (listeningProfileRef.current !== 'default') {
+      setListeningProfile('default');
+    }
+  }, [setListeningProfile]);
 
   // 🔧 nuove ref in cima, vicino agli altri useRef:
   const isSpeakingRef = useRef(false);
@@ -313,6 +494,9 @@ export const useVoiceAssistantNative = () => {
       return;
     }
 
+    cancelFinalResultTimer();
+    finalResultBufferRef.current = '';
+
     if (recognitionRef.current) {
       try {
         const r = recognitionRef.current;
@@ -322,7 +506,7 @@ export const useVoiceAssistantNative = () => {
       } catch {}
     }
     setIsListening(false);
-  }, [requiresUserGestureRecognition]);
+  }, [requiresUserGestureRecognition, cancelFinalResultTimer]);
 
   // 🔧 tieni le ref aggiornate quando cambia lo stato:
   useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
@@ -488,7 +672,8 @@ export const useVoiceAssistantNative = () => {
 
   const pushAssistantHistory = useCallback((text) => {
     pushHistoryEntry('assistant', text);
-  }, [pushHistoryEntry]);
+    applyListeningProfileForAssistantText(text);
+  }, [pushHistoryEntry, applyListeningProfileForAssistantText]);
 
   // ✅ RILASCIO TURNO SICURO post TTS
   const releaseTurnIfIdle = useCallback(() => {
@@ -649,24 +834,40 @@ export const useVoiceAssistantNative = () => {
           break;
         }
           
-        case 'add_to_cart':
+        case 'add_to_cart': {
           console.log('🛒 Adding to cart:', parameters);
-          
+
+          const canonColor = (raw = '') => {
+            const map = {
+              'nero': 'nero', 'black': 'nero',
+              'bianco': 'bianco', 'white': 'bianco',
+              'blu navy': 'blu navy', 'navy': 'blu navy', 'blu scuro': 'blu navy', 'blu': 'blu',
+              'azzurro': 'azzurro',
+              'rosso': 'rosso', 'borgogna': 'bordeaux', 'bordeaux': 'bordeaux',
+              'verde oliva': 'verde oliva', 'oliva': 'verde oliva', 'verde': 'verde',
+              'grigio melange': 'grigio melange', 'melange': 'grigio melange', 'antracite': 'grigio antracite', 'grigio': 'grigio',
+              'beige': 'beige', 'panna': 'panna', 'crema': 'panna',
+              'cammello': 'cammello',
+              'marrone': 'marrone',
+              'rosa': 'rosa',
+              'giallo': 'giallo',
+              'viola': 'viola'
+            };
+            const s = (raw || '').toLowerCase();
+            const keys = Object.keys(map).sort((a, b) => b.length - a.length);
+            for (const k of keys) if (s.includes(k)) return map[k];
+            const parts = s.split(/[\s/,-]+/).filter(Boolean);
+            for (const p of parts) if (map[p]) return map[p];
+            return s || 'nero';
+          };
+
           try {
+            const desiredQuantity = clampQuantity(parameters.quantity ?? 1, 1);
+            const size = (parameters.size || 'M').toUpperCase();
+            const color = canonColor(parameters.color || 'nero');
             const currentPath = window.location.pathname;
+
             if (currentPath.includes('/products/')) {
-              const size = parameters.size || 'M';
-              const canonColor = (raw='') => {
-                const map = { 'nero':'nero','black':'nero','bianco':'bianco','white':'bianco','blu navy':'blu navy','navy':'blu navy','blu scuro':'blu navy','blu':'blu','azzurro':'azzurro','rosso':'rosso','borgogna':'bordeaux','bordeaux':'bordeaux','verde oliva':'verde oliva','oliva':'verde oliva','verde':'verde','grigio melange':'grigio melange','melange':'grigio melange','antracite':'grigio antracite','grigio':'grigio','beige':'beige','panna':'panna','crema':'panna','cammello':'cammello','marrone':'marrone','rosa':'rosa','giallo':'giallo','viola':'viola' };
-                const s = (raw||'').toLowerCase();
-                const keys = Object.keys(map).sort((a,b)=>b.length-a.length);
-                for (const k of keys) if (s.includes(k)) return map[k];
-                const parts = s.split(/[\s/,-]+/).filter(Boolean);
-                for (const p of parts) if (map[p]) return map[p];
-                return s || 'nero';
-              };
-              const color = canonColor(parameters.color || 'nero');
-              
               setTimeout(() => {
                 const sizeButtons = document.querySelectorAll('button');
                 for (let btn of sizeButtons) {
@@ -675,7 +876,7 @@ export const useVoiceAssistantNative = () => {
                     break;
                   }
                 }
-                
+
                 setTimeout(() => {
                   for (let btn of document.querySelectorAll('button')) {
                     if (btn.textContent.toLowerCase().includes(color.toLowerCase())) {
@@ -683,14 +884,25 @@ export const useVoiceAssistantNative = () => {
                       break;
                     }
                   }
-                  
-                  setTimeout(() => {
-                    const addBtn = Array.from(document.querySelectorAll('button'))
-                      .find(btn => btn.textContent.includes('Aggiungi al Carrello'));
-                    if (addBtn) addBtn.click();
-                  }, 300);
                 }, 300);
               }, 200);
+
+              const ctx = await ensureCurrentProductContext();
+              const productForCart = ctx?.product;
+
+              if (productForCart) {
+                const ok = await addToCart(productForCart, size, color, desiredQuantity);
+                if (!ok) throw new Error('Cart update rejected');
+              } else {
+                const fallbackProduct = {
+                  id: parameters.product_id || ctx?.id || '550e8400-0001-41d4-a716-446655440001',
+                  name: parameters.product_name || ctx?.name || 'Prodotto',
+                  price: ctx?.price || parameters.price || 49.9,
+                  brand: ctx?.brand || 'Fashion Brand',
+                };
+                const ok = await addToCart(fallbackProduct, size, color, desiredQuantity);
+                if (!ok) throw new Error('Fallback cart update failed');
+              }
             } else {
               const mockProduct = {
                 id: parameters.product_id || '550e8400-0001-41d4-a716-446655440001',
@@ -698,28 +910,29 @@ export const useVoiceAssistantNative = () => {
                 price: parameters.price || 49.90,
                 brand: 'Fashion Brand'
               };
-              
-              await addToCart(
+
+              const ok = await addToCart(
                 mockProduct,
-                parameters.size || 'M',
-                parameters.color || 'nero',
-                parameters.quantity || 1
+                size,
+                color,
+                desiredQuantity
               );
+              if (!ok) throw new Error('Remote cart update failed');
             }
+
             speak(pickAck('cart-add', CART_ADD_ACK_MESSAGES, 'Aggiunto al carrello.'), () => {
               setIsProcessing(false); isProcessingRef.current = false;
-              turnLockRef.current = false;
-              if (restartListeningRef.current) restartListeningRef.current();
+              releaseTurnIfIdle();
             }, false, { enqueue: false });
           } catch (error) {
             console.error('Error adding to cart:', error);
             speak('Non sono riuscita ad aggiungerlo al carrello.', () => {
               setIsProcessing(false); isProcessingRef.current = false;
-              turnLockRef.current = false;
-              if (restartListeningRef.current) restartListeningRef.current();
+              releaseTurnIfIdle();
             }, false, { enqueue: false });
           }
           break;
+        }
           
         case 'remove_from_cart': {
           const { item_id, product_name, size, color } = parameters || {};
@@ -989,24 +1202,58 @@ export const useVoiceAssistantNative = () => {
 
     recognition.onstart = () => {
       console.log('🎤 Recognition started');
+      cancelFinalResultTimer();
+      finalResultBufferRef.current = '';
       setIsListening(true);
       setError(null);
       setIsUserTurn(true);
       lastInteractionRef.current = Date.now();
       isRestartingRef.current = false; // ✅ Reset flag
-      // NON azzerare la finestra se è un riavvio nella stessa sessione
       if (!listeningTimerRef.current) {
+        const windowDuration = getListeningWindowDuration();
         listeningTimerRef.current = setTimeout(() => {
           if (!isSpeakingRef.current && !isProcessingRef.current) {
-            speak(NO_INPUT_MESSAGES[Math.floor(Math.random()*NO_INPUT_MESSAGES.length)], () => {
+            const prompt = pickNoInputPrompt();
+            const scheduleClosure = () => {
+              const closingDelay = getClosingGraceMs();
               closingTimerRef.current = setTimeout(() => {
                 if (!isSpeakingRef.current && !isProcessingRef.current) {
                   stopAssistant();
                 }
-              }, CLOSING_GRACE_MS);
-            });
+              }, closingDelay);
+            };
+            if (prompt) {
+              speak(prompt, () => {
+                scheduleClosure();
+              }, false, { enqueue: false, listeningProfile: 'default' });
+            } else {
+              scheduleClosure();
+            }
           }
-        }, LISTENING_WINDOW_MS);
+        }, windowDuration);
+      }
+    };
+
+    const commitFinalResult = (shouldStop = false) => {
+      cancelFinalResultTimer();
+      const buffered = finalResultBufferRef.current.trim();
+      if (!buffered) return;
+      finalResultBufferRef.current = '';
+      console.log('💬 User said:', buffered);
+      clearListeningTimers();
+      activeListenSessionIdRef.current = null;
+      beepedThisSessionRef.current = false;
+      setTranscript(buffered);
+      resetInactivityTimeout();
+      if (typeof handleVoiceCommandRef.current === 'function') {
+        try {
+          handleVoiceCommandRef.current(buffered);
+        } catch (err) {
+          console.error('Voice command dispatch failed', err);
+        }
+      }
+      if (shouldStop && recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
       }
     };
 
@@ -1038,20 +1285,9 @@ export const useVoiceAssistantNative = () => {
         }
 
         if (finalTranscript) {
-          console.log('💬 User said:', finalTranscript);
-          // chiudi la sessione corrente: niente più beep o timer
-          clearListeningTimers();
-          activeListenSessionIdRef.current = null;
-          beepedThisSessionRef.current = false;
-          setTranscript(finalTranscript);
-          resetInactivityTimeout();
-          // Prende il lock direttamente handleVoiceCommand
-          handleVoiceCommand(finalTranscript);
-          
-          // Stop recognition after getting final result
-          if (recognitionRef.current) {
-            recognitionRef.current.stop();
-          }
+          finalResultBufferRef.current = `${finalResultBufferRef.current} ${finalTranscript}`.trim();
+          cancelFinalResultTimer();
+          finalResultTimerRef.current = setTimeout(() => commitFinalResult(true), FINAL_RESULT_GRACE_MS);
         }
       }
     };
@@ -1061,6 +1297,8 @@ export const useVoiceAssistantNative = () => {
       if (event.error === 'no-speech') {
         return; // lascia scadere la finestra 11s
       }
+      cancelFinalResultTimer();
+      finalResultBufferRef.current = '';
       // altri errori
       if (event.error === 'network') {
         setError('Errore di connessione. Riprova.');
@@ -1072,6 +1310,9 @@ export const useVoiceAssistantNative = () => {
 
     recognition.onend = () => {
       console.log('🔚 Recognition ended');
+      commitFinalResult(false);
+      cancelFinalResultTimer();
+      finalResultBufferRef.current = '';
       setIsListening(false);
       if (
         isAssistantActiveRef.current &&
@@ -1103,7 +1344,7 @@ export const useVoiceAssistantNative = () => {
     };
 
     return recognition;
-  }, [resumeAudioPipeline, isIOSDevice]);
+  }, [resumeAudioPipeline, isIOSDevice, pickNoInputPrompt, getListeningWindowDuration, getClosingGraceMs, cancelFinalResultTimer]);
 
   // ✅ RESTART LISTENING CORRETTO - PREVIENE LOOP
   const restartListening = useCallback(() => {
@@ -1186,7 +1427,7 @@ export const useVoiceAssistantNative = () => {
   // ✅ STOP ASSISTANT
   const stopAssistant = useCallback(() => {
     console.log('🛑 Stopping assistant');
-    
+
     // Clear recognition
     if (recognitionRef.current) {
       try {
@@ -1208,8 +1449,11 @@ export const useVoiceAssistantNative = () => {
     // Clear timeouts
     if (inactivityTimeoutRef.current) { clearTimeout(inactivityTimeoutRef.current); inactivityTimeoutRef.current = null; }
     clearListeningTimers();          // ⬅️ importante
+    cancelFinalResultTimer();
+    finalResultBufferRef.current = '';
+    lastNoInputPromptRef.current = '';
     if (typeof stopBargeInMonitor === 'function') stopBargeInMonitor();
-    
+
     // Reset all states
     setIsListening(false);
     setIsSpeaking(false);
@@ -1229,9 +1473,10 @@ export const useVoiceAssistantNative = () => {
     assistantTurnBufferRef.current = '';
     lastAssistantHistoryRef.current = '';
     ackHistoryRef.current = {};
+    setListeningProfile('default');
 
     console.log('✅ Assistant stopped');
-  }, []);
+  }, [cancelFinalResultTimer, setListeningProfile]);
 
   // ✅ INACTIVITY TIMEOUT
   const resetInactivityTimeout = useCallback(() => {
@@ -1368,9 +1613,11 @@ export const useVoiceAssistantNative = () => {
   };
 
   const speak = useCallback((text, onEnd, immediate = false, options = {}) => {
-    const { enqueue = false } = options || {};
+    const { enqueue = false, listeningProfile: forcedProfile } = options || {};
     if (!('speechSynthesis' in window)) return;
     try {
+      const sanitized = sanitizeTextForTTS(text);
+      applyListeningProfileForAssistantText(sanitized, forcedProfile);
       resumeAudioPipeline();
       // assicurati che il mic sia off durante TTS
       safeStopRecognition();
@@ -1382,7 +1629,7 @@ export const useVoiceAssistantNative = () => {
         utterQueueRef.current = [];
       }
 
-      const sentences = enqueue ? segmentTextIntoSentences(sanitizeTextForTTS(text)) : [sanitizeTextForTTS(text)];
+      const sentences = enqueue ? segmentTextIntoSentences(sanitized) : [sanitized];
       sentences.forEach(sentence => {
         if (!sentence) return;
         const utt = new SpeechSynthesisUtterance(sentence);
@@ -1440,7 +1687,7 @@ export const useVoiceAssistantNative = () => {
         }, 1500);
       }
     } catch {}
-  }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle, resumeAudioPipeline]);
+  }, [safeStopRecognition, segmentTextIntoSentences, releaseTurnIfIdle, resumeAudioPipeline, applyListeningProfileForAssistantText]);
 
   const flushStreamedSpeech = useCallback((force = false) => {
     const raw = (streamSentenceBufferRef.current || '').replace(/\s+/g, ' ').trim();
@@ -1723,51 +1970,53 @@ export const useVoiceAssistantNative = () => {
   }, []);
 
   // Handle voice command
-  const handleVoiceCommand = useCallback((text) => {
+  const handleVoiceCommand = useCallback(async (text) => {
     if (!text.trim()) return;
     lastUserTextRef.current = text;
+    setListeningProfile('task');
 
-    // 🎙️ Barge-in hard: se l'assistente sta parlando, ferma e libera i lock
-    if (isSpeakingRef.current || window.speechSynthesis.speaking) {
-      try { window.speechSynthesis.cancel(); } catch {}
-      if (typeof stopBargeInMonitor === 'function') stopBargeInMonitor();
-      utterQueueRef.current = [];
-      streamBufferRef.current = '';
-      dropStaleResponsesRef.current = true;   // ignora WS residui finché non ricomincia il processing
-      turnLockRef.current = false;
-      setIsProcessing(false); isProcessingRef.current = false;
-      setIsSpeaking(false);  isSpeakingRef.current = false;
-    }
-    if (turnLockRef.current || isProcessingRef.current) {
-      console.log('🔒 Ignoro comando: turno in corso');
-      if (restartListeningRef.current) restartListeningRef.current();
-      return;
-    }
-    if (closingTimerRef.current) {
-      console.log('⏳ Ignoro comando: chiusura in corso');
-      return;
-    }
-    turnLockRef.current = true;
+    try {
+      // 🎙️ Barge-in hard: se l'assistente sta parlando, ferma e libera i lock
+      if (isSpeakingRef.current || window.speechSynthesis.speaking) {
+        try { window.speechSynthesis.cancel(); } catch {}
+        if (typeof stopBargeInMonitor === 'function') stopBargeInMonitor();
+        utterQueueRef.current = [];
+        streamBufferRef.current = '';
+        dropStaleResponsesRef.current = true;   // ignora WS residui finché non ricomincia il processing
+        turnLockRef.current = false;
+        setIsProcessing(false); isProcessingRef.current = false;
+        setIsSpeaking(false);  isSpeakingRef.current = false;
+      }
+      if (turnLockRef.current || isProcessingRef.current) {
+        console.log('🔒 Ignoro comando: turno in corso');
+        if (restartListeningRef.current) restartListeningRef.current();
+        return;
+      }
+      if (closingTimerRef.current) {
+        console.log('⏳ Ignoro comando: chiusura in corso');
+        return;
+      }
+      turnLockRef.current = true;
 
-    const lower = text.toLowerCase();
-    // 🎯 Intent shortcuts lato client per comandi semplici
-    const goCart = /(apri|mostra|vai|portami).*(il\s+)?carrello|^carrello$/;
-    const goOffers = /(apri|mostra|vai|portami).*(offerte|in offerta|sconti)|^(offerte|sconti|saldi)$/;
-    const goHome = /(torna|vai).*(home|pagina iniziale)|^home$/;
-    // escludi frasi che contengono "carrello"
-    const goProducts = /((apri|mostra|vai|portami).*(pagina\s+)?prodotti(?!.*carrello))|^tutti i prodotti$|^prodotti$|^catalogo$|^mostra tutto$|^mostrami tutto$/;
-    const describeTriggers = [
-      /descrivimi/i,
-      /descrivilo/i,
-      /descrivila/i,
-      /descriv[iy]/i,
-      /descrizione/i,
-      /dettagli/i,
-      /informazioni?(?: sul| del)? prodotto/i,
-      /leggi .*descrizione/i,
-      /dimmi .*descrizione/i,
-      /mostra .*descrizione/i
-    ];
+      const lower = text.toLowerCase();
+      // 🎯 Intent shortcuts lato client per comandi semplici
+      const goCart = /(apri|mostra|vai|portami).*(il\s+)?carrello|^carrello$/;
+      const goOffers = /(apri|mostra|vai|portami).*(offerte|in offerta|sconti)|^(offerte|sconti|saldi)$/;
+      const goHome = /(torna|vai).*(home|pagina iniziale)|^home$/;
+      // escludi frasi che contengono "carrello"
+      const goProducts = /((apri|mostra|vai|portami).*(pagina\s+)?prodotti(?!.*carrello))|^tutti i prodotti$|^prodotti$|^catalogo$|^mostra tutto$|^mostrami tutto$/;
+      const describeTriggers = [
+        /descrivimi/i,
+        /descrivilo/i,
+        /descrivila/i,
+        /descriv[iy]/i,
+        /descrizione/i,
+        /dettagli/i,
+        /informazioni?(?: sul| del)? prodotto/i,
+        /leggi .*descrizione/i,
+        /dimmi .*descrizione/i,
+        /mostra .*descrizione/i
+      ];
     // includi anche “mostra i prodotti nel carrello”
     const readCart = /(elenca|leggi|dimmi|quali|mostra).*(prodotti|articoli).*(nel\s+)?carrello|cosa.*(c\s'?|è|ho).*(nel\s+)?carrello/;
     // 🗑️ svuota/rimuovi tutto dal carrello (locale)
@@ -1908,13 +2157,36 @@ export const useVoiceAssistantNative = () => {
     if (shouldDescribeProduct()) {
       turnLockRef.current = true;
       setIsProcessing(true); isProcessingRef.current = true;
-      const name = window.currentProductContext.name || 'prodotto';
-      const textDesc = `${name}. ${window.currentProductContext.description_text}`.slice(0, 900);
-      speak(textDesc, () => {
-        setIsProcessing(false); isProcessingRef.current = false;
-        turnLockRef.current = false;
-        if (restartListeningRef.current) restartListeningRef.current();
-      }, false, { enqueue: false });
+
+      try {
+        const hydratedContext = await ensureCurrentProductContext();
+        const ctx = hydratedContext && typeof hydratedContext === 'object'
+          ? hydratedContext
+          : (window.currentProductContext || {});
+
+        let descriptionText = ctx?.description_text;
+        if (!descriptionText && ctx?.product) {
+          const merged = mergeProductContext(ctx, ctx.product);
+          window.currentProductContext = merged;
+          descriptionText = merged.description_text;
+        }
+
+        const name = ctx?.name || ctx?.product?.name || 'prodotto';
+        const spokenText = descriptionText
+          ? `${name}. ${descriptionText}`.slice(0, 900)
+          : `Non riesco a trovare ulteriori dettagli su ${name}. Posso aiutarti in altro modo?`;
+
+        speak(spokenText, () => {
+          setIsProcessing(false); isProcessingRef.current = false;
+          releaseTurnIfIdle();
+        }, false, { enqueue: false });
+      } catch (error) {
+        console.error('Errore descrizione prodotto:', error);
+        speak('Non sono riuscita a recuperare la descrizione del prodotto.', () => {
+          setIsProcessing(false); isProcessingRef.current = false;
+          releaseTurnIfIdle();
+        }, false, { enqueue: false });
+      }
       return;
     }
     // ✅ aggiungi al carrello locale dal prodotto corrente
@@ -1979,35 +2251,45 @@ export const useVoiceAssistantNative = () => {
       return;
     }
 
-    setMessages(prev => [...prev, { type: 'user', text, timestamp: new Date().toISOString() }]);
-    
-    setTranscript('');
-    
-    sendMessage({
-      type: 'voice_command',
-      text: text,
-      context: {
-        session_id: sessionIdRef.current,
-        timestamp: new Date().toISOString(),
-        current_page: window.location.pathname,
-        cart_count: (window.cartSnapshot?.length ?? useStore.getState().cartCount),
-        cart: (window.cartSnapshot || []),
-        cart_items_map: (window.cartItemsMap || {}),
-        preferences: useStore.getState().preferences,
-        session_count: sessionCount,
-        // 🔊 nuovo contesto UI
-        current_product: (window.currentProductContext || null),
-        visible_products: (window.visibleProductIds || []),
-        visible_products_map: (window.visibleProductsMap || {}),
-        ui_filters: {
-          q: (window.productsSearchQuery || ''),
-          category: (window.productsSelectedCategory || '')
-        },
-        history: conversationHistoryRef.current.slice(-12)
-      }
-    });
-    pushUserHistory(text);
-  }, [sendMessage, sessionCount, speak, stopAssistant, pushUserHistory, releaseTurnIfIdle]);
+      setMessages(prev => [...prev, { type: 'user', text, timestamp: new Date().toISOString() }]);
+
+      setTranscript('');
+
+      sendMessage({
+        type: 'voice_command',
+        text: text,
+        context: {
+          session_id: sessionIdRef.current,
+          timestamp: new Date().toISOString(),
+          current_page: window.location.pathname,
+          cart_count: (window.cartSnapshot?.length ?? useStore.getState().cartCount),
+          cart: (window.cartSnapshot || []),
+          cart_items_map: (window.cartItemsMap || {}),
+          preferences: useStore.getState().preferences,
+          session_count: sessionCount,
+          // 🔊 nuovo contesto UI
+          current_product: (window.currentProductContext || null),
+          visible_products: (window.visibleProductIds || []),
+          visible_products_map: (window.visibleProductsMap || {}),
+          ui_filters: {
+            q: (window.productsSearchQuery || ''),
+            category: (window.productsSelectedCategory || '')
+          },
+          history: conversationHistoryRef.current.slice(-12)
+        }
+      });
+      pushUserHistory(text);
+    } catch (err) {
+      console.error('Voice command handling error:', err);
+      setIsProcessing(false); isProcessingRef.current = false;
+      turnLockRef.current = false;
+      releaseTurnIfIdle();
+    }
+  }, [sendMessage, sessionCount, speak, stopAssistant, pushUserHistory, releaseTurnIfIdle, ensureCurrentProductContext, setListeningProfile]);
+
+  useEffect(() => {
+    handleVoiceCommandRef.current = handleVoiceCommand;
+  }, [handleVoiceCommand]);
 
   // ✅ TOGGLE LISTENING
   const toggleListening = useCallback(async () => {
@@ -2027,6 +2309,10 @@ export const useVoiceAssistantNative = () => {
       setIsAssistantActive(true);
       isAssistantActiveRef.current = true;
       isRestartingRef.current = false;
+      setListeningProfile('default');
+      lastNoInputPromptRef.current = '';
+      finalResultBufferRef.current = '';
+      cancelFinalResultTimer();
 
       resetInactivityTimeout();
 
@@ -2071,7 +2357,7 @@ export const useVoiceAssistantNative = () => {
       }
     }
   }, [isListening, isAssistantActive, initializeSpeechRecognition, speak, getWelcomeMessage,
-      stopAssistant, resetInactivityTimeout, resumeAudioPipeline]);
+      stopAssistant, resetInactivityTimeout, resumeAudioPipeline, setListeningProfile, cancelFinalResultTimer]);
 
   // Cleanup
   useEffect(() => {
