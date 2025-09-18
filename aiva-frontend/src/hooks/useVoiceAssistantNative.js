@@ -211,6 +211,7 @@ export const useVoiceAssistantNative = () => {
     return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
   }, [isBrowser]);
 
+
   const shouldUseServerSTT = useMemo(() => {
     if (!isBrowser) return false;
     if (!browserSupportsSpeechRecognition()) return true;
