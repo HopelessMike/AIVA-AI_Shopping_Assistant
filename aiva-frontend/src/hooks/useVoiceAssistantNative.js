@@ -203,9 +203,12 @@ export const useVoiceAssistantNative = () => {
   const lastAssistantHistoryRef = useRef('');
   const MAX_HISTORY_ENTRIES = 20;
   const isBrowser = typeof window !== 'undefined' && typeof navigator !== 'undefined';
-  const isIOSDevice = isBrowser && /iP(ad|hone|od)/i.test(navigator.userAgent);
-  const isSafari = isBrowser && /Safari/i.test(navigator.userAgent) && !/Chrome|CriOS|Android/i.test(navigator.userAgent);
-  const requiresUserGestureRecognition = isIOSDevice && isSafari;
+  // Mobile support temporarily disabled: force detection flags to false while the mobile site is in WIP.
+  // const isIOSDevice = isBrowser && /iP(ad|hone|od)/i.test(navigator.userAgent);
+  const isIOSDevice = false;
+  // const isSafari = isBrowser && /Safari/i.test(navigator.userAgent) && !/Chrome|CriOS|Android/i.test(navigator.userAgent);
+  const isSafari = false;
+  const requiresUserGestureRecognition = false;
   const speechPrimedRef = useRef(false);
   const serverSTTStateRef = useRef({ active: false, aborting: false });
   const browserSupportsSpeechRecognition = useCallback(() => {
@@ -3026,19 +3029,13 @@ const executeFunction = useCallback(async (functionName, parameters) => {
         });
       };
 
-      const initialMatch = text.match(addToCartRe);
-      if (initialMatch) {
-        const primarySize = deriveSize(initialMatch[4] || fallbackSize);
-        const primaryColor = resolveColorFrom(initialMatch[6] || fallbackColor);
-        addRequest({ size: primarySize, color: primaryColor, quantity: defaultQuantity });
-      }
-
       const variantRegex = /taglia\s+([a-z0-9]{1,3}|xxs|xs|s|m|l|xl|xxl|xxxl)/gi;
       const variantMatches = Array.from(text.matchAll(variantRegex));
-      variantMatches.forEach(match => {
+      variantMatches.forEach((match, idx) => {
         const matchIndex = match.index ?? 0;
         const sizeToken = match[1] || '';
-        const segment = text.slice(matchIndex, matchIndex + 120);
+        const nextMatchIndex = variantMatches[idx + 1]?.index ?? text.length;
+        const segment = text.slice(matchIndex, nextMatchIndex);
         const quantityNearby = detectQuantityAround(matchIndex);
         const resolvedSize = deriveSize(sizeToken || fallbackSize);
         const resolvedColor = resolveColorFrom(segment || fallbackColor);
@@ -3284,3 +3281,4 @@ const executeFunction = useCallback(async (functionName, parameters) => {
     browserSupportsSpeechRecognition: browserSupportsSpeechRecognition(),
   };
 };
+

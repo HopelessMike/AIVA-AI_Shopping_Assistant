@@ -11,8 +11,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
     Body,
-    Response,
-)
+    Response)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -104,8 +103,7 @@ def ensure_session_cookie(response: Response, session_id: str) -> None:
         httponly=False,
         secure=False,
         samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-    )
+        max_age=60 * 60 * 24 * 30)
 
 
 # Initialize app
@@ -114,8 +112,7 @@ app = FastAPI(
     version="2.0.0",
     description="Secure voice-enabled Italian fashion e-commerce backend",
     docs_url="/api/docs",
-    redoc_url="/api/redoc",
-)
+    redoc_url="/api/redoc")
 
 # CORS Configuration
 cors_kwargs: Dict[str, Any] = {
@@ -131,8 +128,7 @@ if _allowed_origin_regex:
 logger.info(
     "Configured CORS allow_origins=%s allow_origin_regex=%s",
     cors_kwargs["allow_origins"],
-    cors_kwargs.get("allow_origin_regex"),
-)
+    cors_kwargs.get("allow_origin_regex"))
 
 app.add_middleware(CORSMiddleware, **cors_kwargs)
 
@@ -294,8 +290,7 @@ def sanitize_input(text: str, max_length: int = 500) -> str:
         r"(DROP|DELETE|INSERT|UPDATE|SELECT|UNION|EXEC|EXECUTE)",
         "",
         text,
-        flags=re.IGNORECASE,
-    )
+        flags=re.IGNORECASE)
     return text.strip()
 
 
@@ -318,8 +313,6 @@ class ProductVariant(BaseModel):
     color: str
     color_code: str  # Hex color code
     available: bool
-    stock: int
-
 
 class Product(BaseModel):
     id: str
@@ -551,51 +544,37 @@ class DataStore:
                         size=Size.S,
                         color="Bianco",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Bianco",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=20,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Bianco",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=25,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=30,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=18,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Grigio melange",
                         color_code="#B0B0B0",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/tshirt-basic-1.jpg", "/images/tshirt-basic-2.jpg"],
                 "features": ["Traspirante", "Cotone biologico", "Taglio regular"],
@@ -633,37 +612,27 @@ class DataStore:
                         size=Size.M,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Bordeaux",
                         color_code="#800020",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Bordeaux",
                         color_code="#800020",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/polo-1.jpg"],
                 "features": ["Slim fit", "Logo ricamato", "Colletto button-down"],
@@ -694,37 +663,27 @@ class DataStore:
                         size=Size.S,
                         color="Bianco",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Bianco",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Bianco",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Azzurro",
                         color_code="#87CEEB",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Azzurro",
                         color_code="#87CEEB",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/camicia-oxford.jpg"],
                 "features": ["Button-down", "Taschino", "No stiro"],
@@ -754,30 +713,22 @@ class DataStore:
                         size=Size.S,
                         color="Rosa antico",
                         color_code="#D4A5A5",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Rosa antico",
                         color_code="#D4A5A5",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Rosa antico",
                         color_code="#D4A5A5",
-                        available=False,
-                        stock=0,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Blu polvere",
                         color_code="#B0C4DE",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/camicetta-seta.jpg"],
                 "features": ["100% Seta", "Stampa floreale", "Taglio femminile"],
@@ -808,37 +759,27 @@ class DataStore:
                         size=Size.S,
                         color="Cammello",
                         color_code="#C19A6B",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Cammello",
                         color_code="#C19A6B",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Cammello",
                         color_code="#C19A6B",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Grigio antracite",
                         color_code="#293133",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Grigio antracite",
                         color_code="#293133",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/maglione-cashmere.jpg"],
                 "features": ["Puro cashmere", "Extra morbido", "Termoregolatore"],
@@ -868,37 +809,27 @@ class DataStore:
                         size=Size.XS,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Panna",
                         color_code="#FFFDD0",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Panna",
                         color_code="#FFFDD0",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/dolcevita-lana.jpg"],
                 "features": ["Lana merino", "Antibatterico naturale", "Slim fit"],
@@ -929,51 +860,37 @@ class DataStore:
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=20,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=25,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=22,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Grigio melange",
                         color_code="#B0B0B0",
-                        available=True,
-                        stock=18,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Grigio melange",
                         color_code="#B0B0B0",
-                        available=True,
-                        stock=16,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Verde oliva",
                         color_code="#708238",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/felpa-hoodie.jpg"],
                 "features": ["Oversize", "Cappuccio regolabile", "Tasche marsupio"],
@@ -1003,30 +920,22 @@ class DataStore:
                         size=Size.M,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=14,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=16,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Blu navy",
                         color_code="#000080",
-                        available=False,
-                        stock=0,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Grigio chiaro",
                         color_code="#D3D3D3",
-                        available=True,
-                        stock=11,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/felpa-vintage.jpg"],
                 "features": ["Cotone biologico", "Logo ricamato", "Stile vintage"],
@@ -1057,30 +966,22 @@ class DataStore:
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=2,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Marrone",
                         color_code="#8B4513",
-                        available=True,
-                        stock=2,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/bomber-pelle.jpg"],
                 "features": ["Vera pelle", "Fodera termica", "Water resistant"],
@@ -1110,44 +1011,32 @@ class DataStore:
                         size=Size.XS,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/piumino-lungo.jpg"],
                 "features": ["Extra caldo", "Cappuccio removibile", "Antivento"],
@@ -1177,30 +1066,22 @@ class DataStore:
                         size=Size.M,
                         color="Blu notte",
                         color_code="#191970",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Blu notte",
                         color_code="#191970",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Blu notte",
                         color_code="#191970",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Grigio scuro",
                         color_code="#696969",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/blazer-lana.jpg"],
                 "features": ["Taglio sartoriale", "Lana vergine", "Fodera completa"],
@@ -1231,44 +1112,32 @@ class DataStore:
                         size=Size.S,
                         color="Blu scuro",
                         color_code="#00008B",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Blu scuro",
                         color_code="#00008B",
-                        available=True,
-                        stock=20,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Blu scuro",
                         color_code="#00008B",
-                        available=True,
-                        stock=18,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Blu scuro",
                         color_code="#00008B",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=14,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=16,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/jeans-slim.jpg"],
                 "features": ["Stretch", "Slim fit", "Stone washed"],
@@ -1298,30 +1167,22 @@ class DataStore:
                         size=Size.M,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/chino.jpg"],
                 "features": ["Regular fit", "Cotone twill", "No stiro"],
@@ -1351,37 +1212,27 @@ class DataStore:
                         size=Size.XS,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=11,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Crema",
                         color_code="#FFFDD0",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Crema",
                         color_code="#FFFDD0",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/pantaloni-palazzo.jpg"],
                 "features": ["Vita alta", "Gamba ampia", "Fluidi"],
@@ -1412,30 +1263,22 @@ class DataStore:
                         size=Size.M,
                         color="Kaki",
                         color_code="#C3B091",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Kaki",
                         color_code="#C3B091",
-                        available=True,
-                        stock=18,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Kaki",
                         color_code="#C3B091",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Verde militare",
                         color_code="#4B5320",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/bermuda-cargo.jpg"],
                 "features": ["Tasche cargo", "Resistente", "Coulisse in vita"],
@@ -1465,30 +1308,22 @@ class DataStore:
                         size=Size.XS,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=20,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=25,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=22,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Rosa",
                         color_code="#FFC0CB",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/shorts-sport.jpg"],
                 "features": ["Elasticizzati", "Traspiranti", "Quick dry"],
@@ -1519,30 +1354,22 @@ class DataStore:
                         size=Size.XS,
                         color="Rosa cipria",
                         color_code="#F4C2C2",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Rosa cipria",
                         color_code="#F4C2C2",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Rosa cipria",
                         color_code="#F4C2C2",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Blu navy",
                         color_code="#000080",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/gonna-midi.jpg"],
                 "features": ["Plissettata", "Lunghezza midi", "Fodera"],
@@ -1572,30 +1399,22 @@ class DataStore:
                         size=Size.XS,
                         color="Denim chiaro",
                         color_code="#6495ED",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Denim chiaro",
                         color_code="#6495ED",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Denim chiaro",
                         color_code="#6495ED",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Denim scuro",
                         color_code="#00008B",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/minigonna-denim.jpg"],
                 "features": ["Bottoni frontali", "Taglio A-line", "Vintage style"],
@@ -1626,30 +1445,22 @@ class DataStore:
                         size=Size.XS,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Rosso borgogna",
                         color_code="#800020",
-                        available=True,
-                        stock=2,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/abito-sera.jpg"],
                 "features": ["100% Seta", "Schiena scoperta", "Spacco laterale"],
@@ -1679,30 +1490,22 @@ class DataStore:
                         size=Size.S,
                         color="Verde salvia",
                         color_code="#87A96B",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Verde salvia",
                         color_code="#87A96B",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Verde salvia",
                         color_code="#87A96B",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Blu polvere",
                         color_code="#B0C4DE",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/vestito-chemisier.jpg"],
                 "features": ["Cintura inclusa", "Bottoni frontali", "Versatile"],
@@ -1733,37 +1536,27 @@ class DataStore:
                         size=Size.S,
                         color="Bianco/Verde",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Bianco/Verde",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Bianco/Verde",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Bianco/Verde",
                         color_code="#FFFFFF",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero/Bianco",
                         color_code="#000000",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/sneakers-vintage.jpg"],
                 "features": ["Pelle premium", "Stile vintage", "Suola vulcanizzata"],
@@ -1793,30 +1586,22 @@ class DataStore:
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Marrone",
                         color_code="#8B4513",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/stivali-chelsea.jpg"],
                 "features": ["Pelle di vitello", "Elastici laterali", "Suola in cuoio"],
@@ -1846,30 +1631,22 @@ class DataStore:
                         size=Size.S,
                         color="Nude",
                         color_code="#F5DEB3",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nude",
                         color_code="#F5DEB3",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nude",
                         color_code="#F5DEB3",
-                        available=False,
-                        stock=0,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/sandali-platform.jpg"],
                 "features": ["Platform 5cm", "Cinturino regolabile", "Antiscivolo"],
@@ -1900,23 +1677,17 @@ class DataStore:
                         size=Size.M,
                         color="Nero/Marrone",
                         color_code="#000000",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Nero/Marrone",
                         color_code="#000000",
-                        available=True,
-                        stock=18,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.XL,
                         color="Nero/Marrone",
                         color_code="#000000",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/cintura-reversibile.jpg"],
                 "features": ["Reversibile", "Vera pelle", "Fibbia girevole"],
@@ -1946,23 +1717,17 @@ class DataStore:
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Cognac",
                         color_code="#8B4513",
-                        available=True,
-                        stock=6,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Grigio",
                         color_code="#808080",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/borsa-tracolla.jpg"],
                 "features": ["Capiente", "Multi-tasca", "Tracolla regolabile"],
@@ -1992,16 +1757,12 @@ class DataStore:
                         size=Size.M,
                         color="Naturale",
                         color_code="#F5DEB3",
-                        available=True,
-                        stock=7,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Naturale",
                         color_code="#F5DEB3",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/cappello-panama.jpg"],
                 "features": ["Tessuto a mano", "Protezione UV", "Paglia naturale"],
@@ -2031,23 +1792,17 @@ class DataStore:
                         size=Size.M,
                         color="Grigio perla",
                         color_code="#E5E4E2",
-                        available=True,
-                        stock=5,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Navy",
                         color_code="#000080",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Bordeaux",
                         color_code="#800020",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/sciarpa-cashmere.jpg"],
                 "features": ["100% Cashmere", "200x70cm", "Extra morbida"],
@@ -2077,16 +1832,12 @@ class DataStore:
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=20,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Grigio antracite",
                         color_code="#293133",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/zaino-business.jpg"],
                 "features": ["Porta USB", "Impermeabile", "Scomparto laptop"],
@@ -2117,23 +1868,17 @@ class DataStore:
                         size=Size.M,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=3,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Beige",
                         color_code="#F5F5DC",
-                        available=True,
-                        stock=4,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.L,
                         color="Azzurro polvere",
                         color_code="#B0C4DE",
-                        available=True,
-                        stock=2,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/completo-lino.jpg"],
                 "features": ["100% Lino", "Giacca e pantalone", "Traspirante"],
@@ -2163,37 +1908,27 @@ class DataStore:
                         size=Size.XS,
                         color="Rosa antico",
                         color_code="#D4A5A5",
-                        available=True,
-                        stock=8,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Rosa antico",
                         color_code="#D4A5A5",
-                        available=True,
-                        stock=10,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Rosa antico",
                         color_code="#D4A5A5",
-                        available=True,
-                        stock=9,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.S,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=12,
-                    ),
+                        available=True),
                     ProductVariant(
                         size=Size.M,
                         color="Nero",
                         color_code="#000000",
-                        available=True,
-                        stock=15,
-                    ),
+                        available=True),
                 ],
                 "images": ["/images/tuta-sportiva.jpg"],
                 "features": ["Set coordinato", "Elasticizzato", "Moisture wicking"],
@@ -2250,8 +1985,7 @@ class DataStore:
         self,
         query: Optional[str] = None,
         filters: Optional[SearchFilters] = None,
-        limit: int = 10,
-    ) -> List[Product]:
+        limit: int = 10) -> List[Product]:
         """Advanced product search with Italian term normalization"""
         results = self.products
 
@@ -2356,7 +2090,7 @@ class DataStore:
 
         for variant in product.variants:
             if variant.size.value == size and variant.color.lower() == color.lower():
-                return variant.available and variant.stock > 0
+                return True if variant.available else False
         return False
 
     def add_to_cart(
@@ -2365,8 +2099,7 @@ class DataStore:
         product_id: str,
         size: str,
         color: str,
-        quantity: int,
-    ) -> CartItem:
+        quantity: int) -> CartItem:
         """Add item to cart with specific variant"""
         product = self.get_product_by_id(product_id)
         if not product:
@@ -2377,11 +2110,6 @@ class DataStore:
         for variant in product.variants:
             if variant.size.value == size and variant.color.lower() == color.lower():
                 variant_found = True
-                if not variant.available or variant.stock < quantity:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Variante non disponibile o stock insufficiente",
-                    )
                 break
 
         if not variant_found:
@@ -2409,8 +2137,7 @@ class DataStore:
             size=Size(size.upper()),
             color=color,
             quantity=quantity,
-            subtotal=quantity * product.price,
-        )
+            subtotal=quantity * product.price)
         cart.items.append(cart_item)
         self._update_cart_totals(cart)
         return cart_item
@@ -2463,8 +2190,7 @@ class DataStore:
         product_id: Optional[str] = None,
         category: Optional[str] = None,
         style: Optional[str] = None,
-        limit: int = 3,
-    ) -> List[Product]:
+        limit: int = 3) -> List[Product]:
         """Get smart product recommendations"""
         recommendations = []
 
@@ -2750,8 +2476,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     {
                         "type": "processing_start",
                         "message": "Sto elaborando la tua richiesta...",
-                    },
-                )
+                    })
 
                 try:
                     from ai_service import process_voice_command_streaming
@@ -2765,8 +2490,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         {
                             "type": "error",
                             "message": "Mi dispiace, ho riscontrato un errore. Riprova più tardi.",
-                        },
-                    )
+                        })
 
             elif data.get("type") == "update_preferences":
                 # Update user preferences
@@ -2789,8 +2513,7 @@ async def get_products(
     max_price: Optional[float] = None,
     on_sale: Optional[bool] = None,
     brand: Optional[str] = None,
-    limit: int = 20,
-):
+    limit: int = 20):
     """Get products with advanced filtering"""
     filters = SearchFilters(
         category=category,
@@ -2800,8 +2523,7 @@ async def get_products(
         price_min=min_price,
         price_max=max_price,
         on_sale=on_sale,
-        brand=brand,
-    )
+        brand=brand)
 
     return data_store.search_products(query=q, filters=filters, limit=limit)
 
@@ -2827,8 +2549,7 @@ async def get_recommendations(
     product_id: Optional[str] = None,
     category: Optional[str] = None,
     style: Optional[str] = None,
-    limit: int = 3,
-):
+    limit: int = 3):
     """Get smart product recommendations"""
     return data_store.get_recommendations(product_id, category, style, limit)
 
@@ -3014,8 +2735,7 @@ async def speech_to_text_endpoint(
         result = await transcribe_pcm16(
             payload.audio,
             sample_rate=payload.sample_rate,
-            language=payload.language or "it-IT",
-        )
+            language=payload.language or "it-IT")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -3025,8 +2745,7 @@ async def speech_to_text_endpoint(
             detail={
                 "message": "Trascrizione audio non disponibile",
                 "reason": result.reason or "unknown",
-            },
-        )
+            })
 
     return {
         "text": result.text,
@@ -3048,8 +2767,7 @@ async def tts_endpoint(payload: TTSRequest, request: Request, response: Response
             detail={
                 "message": "Sintesi vocale non disponibile",
                 "reason": result.reason or "unknown",
-            },
-        )
+            })
 
     return {
         "audio": result.audio_base64,
@@ -3181,8 +2899,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
                 "message": exc.detail,
                 "timestamp": datetime.utcnow().isoformat(),
             }
-        },
-    )
+        })
 
 
 # Lifecycle Events

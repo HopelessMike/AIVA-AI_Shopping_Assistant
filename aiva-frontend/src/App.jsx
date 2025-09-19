@@ -231,8 +231,20 @@ const VoiceAssistantButton = ({
     </motion.div>
   );
 };
-
-// Navigation Component
+const MobileWipPage = () => (
+  <div className="min-h-screen bg-gradient-to-br from-rose-50 via-white to-purple-50 flex items-center justify-center px-6">
+    <div className="max-w-md text-center space-y-6">
+      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-lg">
+        <Sparkles size={28} />
+      </div>
+      <h1 className="text-3xl font-bold text-gray-900">Versione mobile in arrivo!</h1>
+      <p className="text-gray-600 leading-relaxed">
+        Stiamo mettendo a punto l'esperienza mobile di AIVA. Collegati da desktop per provare la demo completa con la nostra personal shopper AI.
+      </p>
+      <p className="text-sm text-gray-500">Grazie della pazienza, torna a trovarci presto!</p>
+    </div>
+  </div>
+);
 const Navigation = ({ cartItemsCount }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const MotionLink = motion(Link);
@@ -393,7 +405,7 @@ const Footer = () => {
 };
 
 // ✅ MAIN APP COMPONENT MIGLIORATO
-export default function App() {
+function DesktopExperience() {
   const location = useLocation();
   
   // Cart hook for real cart count
@@ -419,13 +431,12 @@ export default function App() {
 
   // Clear error after 5 seconds
   useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => {
-        clearError();
-      }, 5000);
-      return () => clearTimeout(timer);
+    if (typeof navigator === 'undefined') {
+      return;
     }
-  }, [error, clearError]);
+    const ua = navigator.userAgent || '';
+    setIsMobileViewport(/Mobi|Android|iPhone|iPad|iPod/i.test(ua));
+  }, []);
 
   // ✅ HANDLER CHIUSURA COMPLETA ASSISTENTE
   const handleCloseAssistant = () => {
@@ -488,3 +499,38 @@ export default function App() {
     </div>
   );
 }
+function App() {
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined') {
+      return;
+    }
+    const ua = navigator.userAgent || '';
+    setIsMobileViewport(/Mobi|Android|iPhone|iPad|iPod/i.test(ua));
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const handleResize = () => {
+      const ua = (navigator && navigator.userAgent) ? navigator.userAgent : '';
+      setIsMobileViewport(/Mobi|Android|iPhone|iPad|iPod/i.test(ua));
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
+  if (isMobileViewport) {
+    return <MobileWipPage />;
+  }
+
+  return <DesktopExperience />;
+}
+
+export default App;
