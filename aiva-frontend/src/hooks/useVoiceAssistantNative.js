@@ -882,6 +882,23 @@ export const useVoiceAssistantNative = () => {
     }, 300);
   }, [filterProducts]);
 
+  const scheduleListenAfterNav = useCallback((delay = 700) => {
+    setTimeout(() => {
+      if (
+        isAssistantActiveRef.current &&
+        !isRestartingRef.current &&
+        !isOutputSpeaking() &&
+        !isSpeakingRef.current &&
+        !isProcessingRef.current &&
+        functionQueueRef.current.length === 0
+      ) {
+        if (restartListeningRef.current) {
+          restartListeningRef.current();
+        }
+      }
+    }, delay);
+  }, [isOutputSpeaking]);
+
 const executeFunction = useCallback(async (functionName, parameters) => {
     console.log('🎯 Executing function:', functionName, parameters);
     setIsExecutingFunction(true);
@@ -1957,22 +1974,6 @@ const executeFunction = useCallback(async (functionName, parameters) => {
   }, [isSpeaking, isExecutingFunction, initializeSpeechRecognition, playReadyBeep, requiresUserGestureRecognition, isOutputSpeaking]);
 
   // Programmatic restart dopo navigazioni/cambi DOM
-  const scheduleListenAfterNav = useCallback((delay = 700) => {
-    setTimeout(() => {
-      if (
-        isAssistantActiveRef.current &&
-        !isRestartingRef.current &&
-        !isOutputSpeaking() &&
-        !isSpeakingRef.current &&
-        !isProcessingRef.current &&
-        functionQueueRef.current.length === 0
-      ) {
-        if (restartListeningRef.current) {
-          restartListeningRef.current();
-        }
-      }
-    }, delay);
-  }, [isOutputSpeaking]);
 
   // Aggiorna la ref del restart dopo ogni render utile
   useEffect(() => {
